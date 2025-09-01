@@ -1,0 +1,29 @@
+Drill report for canbus-outpost.kicad_pcb
+Created on 2025-09-01T18:06:31-0400
+
+Copper Layer Stackup:
+    =============================================================
+    L1 :  F.Cu                      front
+    L2 :  B.Cu                      back
+
+
+Drill file 'canbus-outpost-PTH.drl' contains
+    plated through holes:
+    =============================================================
+    T1  0.300mm  0.0118"  (111 holes)
+    T2  0.300mm  0.0118"  (8 holes)
+    T3  0.760mm  0.0299"  (16 holes)
+    T4  1.000mm  0.0394"  (30 holes)
+    T5  1.200mm  0.0472"  (10 holes)
+
+    Total plated holes count 175
+
+
+Drill file 'canbus-outpost-NPTH.drl' contains
+    unplated through holes:
+    =============================================================
+    T1  1.600mm  0.0630"  (1 hole)
+    T2  1.800mm  0.0709"  (1 hole)
+    T3  3.200mm  0.1260"  (4 holes)
+
+    Total unplated holes count 6
