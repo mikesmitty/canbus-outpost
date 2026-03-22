@@ -28,3 +28,8 @@ fp-info-cache
 
 # Exported BOM files
 *.xml
+
+# Firmware build artifacts
+build/
+*.uf2
+*.elf
