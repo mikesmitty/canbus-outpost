@@ -14705,7 +14705,7 @@
 				)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 373.38 125.73 0)
 			(effects
 				(font
@@ -14740,7 +14740,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 118.11 0)
 			(effects
 				(font
@@ -15270,7 +15270,7 @@
 				)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 373.38 181.61 0)
 			(effects
 				(font
@@ -15305,7 +15305,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 173.99 0)
 			(effects
 				(font
@@ -15698,7 +15698,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 373.888 153.67 0)
 			(effects
 				(font
@@ -15734,7 +15734,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 147.32 0)
 			(effects
 				(font
@@ -17916,7 +17916,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 373.888 97.79 0)
 			(effects
 				(font
@@ -17952,7 +17952,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 91.44 0)
 			(effects
 				(font
@@ -20512,7 +20512,7 @@
 				)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 373.38 69.85 0)
 			(effects
 				(font
@@ -20547,7 +20547,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 62.23 0)
 			(effects
 				(font
@@ -21007,7 +21007,7 @@
 				)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 377.19 142.748 0)
 			(effects
 				(font
@@ -21042,7 +21042,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 147.32 0)
 			(effects
 				(font
@@ -22487,7 +22487,7 @@
 				)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 377.19 198.628 0)
 			(effects
 				(font
@@ -22522,7 +22522,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 203.2 0)
 			(effects
 				(font
@@ -25997,7 +25997,7 @@
 				)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 377.19 86.868 0)
 			(effects
 				(font
@@ -26032,7 +26032,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 91.44 0)
 			(effects
 				(font
@@ -26522,7 +26522,7 @@
 				)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 377.19 30.988 0)
 			(effects
 				(font
@@ -26557,7 +26557,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 35.56 0)
 			(effects
 				(font
@@ -27700,7 +27700,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 373.888 41.91 0)
 			(effects
 				(font
@@ -27736,7 +27736,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 35.56 0)
 			(effects
 				(font
@@ -27805,7 +27805,7 @@
 				)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 373.38 237.49 0)
 			(effects
 				(font
@@ -27840,7 +27840,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 229.87 0)
 			(effects
 				(font
@@ -28398,7 +28398,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "LM393"
+		(property "Value" "TLV3202"
 			(at 373.888 209.55 0)
 			(effects
 				(font
@@ -28434,7 +28434,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C7955"
+		(property "LCSC" "C129325"
 			(at 373.38 203.2 0)
 			(effects
 				(font
