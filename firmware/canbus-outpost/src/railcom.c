@@ -32,19 +32,18 @@ typedef struct {
     uint8_t pin;
     PIO pio;
     uint sm;
-    uint8_t buffer[10];
+    uint8_t buffer[12];
     uint8_t buf_idx;
-    absolute_time_t last_edge;
-    bool last_pin_state;
-    bool in_potential_gap;
 } railcom_receiver_t;
 
 typedef struct {
-    railcom_receiver_t rx_a;
-    railcom_receiver_t rx_b;
-    railcom_data_t last_data;
+    railcom_receiver_t rx_data;
+    uint8_t cutout_pin;
+    bool last_cutout_state; // true = high, false = low
+    absolute_time_t last_edge;
     bool signal_active;
-    absolute_time_t last_valid_gap;
+    absolute_time_t last_valid_cutout;
+    railcom_data_t last_data;
 } railcom_channel_state_t;
 
 static railcom_channel_state_t channels[RAILCOM_MAX_CHANNELS];
@@ -54,15 +53,13 @@ static void rx_init(railcom_receiver_t *rx, PIO pio, uint8_t pin, uint offset) {
     rx->pio = pio;
     rx->sm = pio_claim_unused_sm(pio, true);
     rx->buf_idx = 0;
-    rx->last_edge = get_absolute_time();
-    rx->last_pin_state = false;
-    rx->in_potential_gap = false;
 
     pio_sm_config c = railcom_uart_program_get_default_config(offset);
     sm_config_set_in_pins(&c, pin);
     sm_config_set_in_shift(&c, true, true, 8); 
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
     
+    // 250kbps, 10 cycles per bit
     float div = (float)clock_get_hz(clk_sys) / (250000.0f * 10.0f);
     sm_config_set_clkdiv(&c, div);
     
@@ -86,85 +83,95 @@ void railcom_init(void) {
         PIO pio = (i == 0) ? pio0 : (i < 3 ? pio1 : pio2);
         uint offset = (i == 0) ? offset0 : (i < 3 ? offset1 : offset2);
         
-        rx_init(&channels[i].rx_a, pio, pins_a[i], offset);
-        rx_init(&channels[i].rx_b, pio, pins_b[i], offset);
+        rx_init(&channels[i].rx_data, pio, pins_a[i], offset);
         
+        channels[i].cutout_pin = pins_b[i];
+        gpio_init(channels[i].cutout_pin);
+        gpio_set_dir(channels[i].cutout_pin, GPIO_IN);
+        gpio_pull_up(channels[i].cutout_pin);
+        
+        channels[i].last_cutout_state = gpio_get(channels[i].cutout_pin);
+        channels[i].last_edge = get_absolute_time();
         channels[i].signal_active = false;
-        channels[i].last_valid_gap = get_absolute_time();
+        channels[i].last_valid_cutout = get_absolute_time();
+        
         railcom_on_signal(i, false);
     }
-    DBG("RailCom: Proactive Gap Detection Initialized.\n");
+    DBG("RailCom: Initialized with Cutout Gating on Pin B.\n");
 }
 
-static void decode_buffer(int ch, railcom_receiver_t *rx, bool is_b) {
+static void decode_buffer(int ch) {
+    railcom_receiver_t *rx = &channels[ch].rx_data;
     if (rx->buf_idx < 2) return; 
 
-    uint8_t high_raw = decode_table[rx->buffer[0]];
-    uint8_t low_raw = decode_table[rx->buffer[1]];
+    // We look for 2-byte address packets (Channel 1)
+    // RailCom 4/8 encoding means we need to decode them first.
+    // The buffer might contain more than 2 bytes if Channel 2 data was also present.
+    
+    for (int i = 0; i <= (int)rx->buf_idx - 2; i++) {
+        uint8_t high_raw = decode_table[rx->buffer[i]];
+        uint8_t low_raw = decode_table[rx->buffer[i+1]];
 
-    if (high_raw < 64 && low_raw < 64) {
-        uint16_t address = (uint16_t)high_raw << 6 | (uint16_t)low_raw;
-        if (address != channels[ch].last_data.address || !channels[ch].last_data.occupied) {
-            channels[ch].last_data.address = address;
-            channels[ch].last_data.occupied = true;
-            railcom_on_data(ch, &channels[ch].last_data);
-            
-            DBG("RailCom Ch %d: Addr %d (Pin %s)\n", ch, address, is_b ? "B" : "A");
-        }
-    }
-}
-
-static void process_receiver(int ch, railcom_receiver_t *rx, bool is_b) {
-    bool current_pin = gpio_get(rx->pin);
-    absolute_time_t now = get_absolute_time();
-
-    // 1. Detect if we are entering a gap (no transitions for > 150us)
-    int64_t time_since_edge = absolute_time_diff_us(rx->last_edge, now);
-    if (!rx->in_potential_gap && time_since_edge > 150) {
-        // Clear DCC garbage from FIFO
-        pio_sm_clear_fifos(rx->pio, rx->sm);
-        rx->buf_idx = 0;
-        rx->in_potential_gap = true;
-    }
-
-    // 2. Track transitions to identify gap endings
-    if (current_pin != rx->last_pin_state) {
-        int64_t dt = absolute_time_diff_us(rx->last_edge, now);
-        rx->last_edge = now;
-        rx->last_pin_state = current_pin;
-        rx->in_potential_gap = false;
-
-        // Valid RailCom gap is ~488us
-        if (dt > 400 && dt < 600) {
-            // Collect any bytes that arrived during this specific gap
-            while (!pio_sm_is_rx_fifo_empty(rx->pio, rx->sm)) {
-                uint32_t val = pio_sm_get(rx->pio, rx->sm);
-                if (rx->buf_idx < sizeof(rx->buffer)) {
-                    rx->buffer[rx->buf_idx++] = (uint8_t)(val >> 24);
-                }
+        if (high_raw < 64 && low_raw < 64) {
+            uint16_t address = (uint16_t)high_raw << 6 | (uint16_t)low_raw;
+            if (address != channels[ch].last_data.address || !channels[ch].last_data.occupied) {
+                channels[ch].last_data.address = address;
+                channels[ch].last_data.occupied = true;
+                railcom_on_data(ch, &channels[ch].last_data);
+                
+                DBG("RailCom Ch %d: Addr %d\n", ch, address);
             }
-            decode_buffer(ch, rx, is_b);
-            
-            channels[ch].last_valid_gap = now;
-            if (!channels[ch].signal_active) {
-                channels[ch].signal_active = true;
-                railcom_on_signal(ch, true);
-            }
-        } else if (dt > 300 && dt < 1000) {
-            // Optional: Log "near miss" gaps for tuning
+            break; // Found an address, good enough for now
         }
     }
 }
 
 void railcom_run(void) {
     absolute_time_t now = get_absolute_time();
+    
     for (int i = 0; i < RAILCOM_MAX_CHANNELS; i++) {
-        process_receiver(i, &channels[i].rx_a, false);
-        process_receiver(i, &channels[i].rx_b, true);
+        bool current_cutout = gpio_get(channels[i].cutout_pin);
+        
+        if (current_cutout != channels[i].last_cutout_state) {
+            int64_t dt = absolute_time_diff_us(channels[i].last_edge, now);
+            channels[i].last_edge = now;
+            
+            if (!current_cutout) {
+                // Falling edge: Cutout Started
+                // Clear any DCC noise from PIO FIFO
+                pio_sm_clear_fifos(channels[i].rx_data.pio, channels[i].rx_data.sm);
+                channels[i].rx_data.buf_idx = 0;
+            } else {
+                // Rising edge: Cutout Ended
+                // If the low period was roughly a cutout length (~488us)
+                if (dt > 400 && dt < 600) {
+                    // Collect bytes received during the cutout
+                    while (!pio_sm_is_rx_fifo_empty(channels[i].rx_data.pio, channels[i].rx_data.sm)) {
+                        uint32_t val = pio_sm_get(channels[i].rx_data.pio, channels[i].rx_data.sm);
+                        if (channels[i].rx_data.buf_idx < sizeof(channels[i].rx_data.buffer)) {
+                            channels[i].rx_data.buffer[channels[i].rx_data.buf_idx++] = (uint8_t)(val >> 24);
+                        }
+                    }
+                    
+                    if (channels[i].rx_data.buf_idx > 0) {
+                        decode_buffer(i);
+                    }
+                    
+                    channels[i].last_valid_cutout = now;
+                    if (!channels[i].signal_active) {
+                        channels[i].signal_active = true;
+                        railcom_on_signal(i, true);
+                    }
+                }
+            }
+            channels[i].last_cutout_state = current_cutout;
+        }
 
-        // Check for signal loss (increased to 500ms for stability)
-        if (channels[i].signal_active && absolute_time_diff_us(channels[i].last_valid_gap, now) > 500000) {
+        // Check for signal loss
+        if (channels[i].signal_active && absolute_time_diff_us(channels[i].last_valid_cutout, now) > 500000) {
             channels[i].signal_active = false;
+            channels[i].last_data.occupied = false;
+            channels[i].last_data.address = 0;
             railcom_on_signal(i, false);
         }
     }
