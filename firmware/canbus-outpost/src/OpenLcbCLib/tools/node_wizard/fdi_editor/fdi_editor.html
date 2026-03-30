@@ -1,0 +1,1471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FDI Editor — OpenLcbCLib</title>
+
+    <!-- CodeMirror 6 — local bundle (no internet required) -->
+    <script src="../vendor/codemirror/dist/codemirror.min.js"></script>
+    <script src="../vendor/codemirror/cm-adapter.js"></script>
+    <script src="../vendor/codemirror/cm-readonly.js"></script>
+
+    <style>
+
+        /* ===== Reset & base ================================================ */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --color-primary:        #0056b3;
+            --color-primary-dark:   #004494;
+            --color-bg:             #f4f4f9;
+            --color-surface:        #ffffff;
+            --color-border:         #ddd;
+            --color-text:           #333;
+            --color-muted:          #666;
+            --color-error-bg:       #fee2e2;
+            --color-error-text:     #b91c1c;
+            --color-warning-bg:     #fef3c7;
+            --color-warning-text:   #92400e;
+            --color-info-bg:        #e0f2fe;
+            --color-info-text:      #075985;
+            --color-toolbar-h:      40px;
+            --splitter-size:        6px;
+            --font-mono:            'Consolas', 'Menlo', 'Courier New', monospace;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            background: var(--color-bg);
+            color: var(--color-text);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        /* Full-height flex shell */
+        .app-shell {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* ===== Top header ================================================== */
+        .app-header {
+            height: 44px;
+            background: var(--color-primary);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            padding: 0 14px;
+            gap: 12px;
+            flex-shrink: 0;
+            z-index: 200;
+        }
+
+        .app-header h1 {
+            font-size: 15px;
+            font-weight: 600;
+            white-space: nowrap;
+            margin-right: auto;
+        }
+
+        /* ===== Toolbar ===================================================== */
+        .toolbar {
+            height: var(--color-toolbar-h);
+            background: #e9ecef;
+            border-bottom: 1px solid var(--color-border);
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .toolbar button {
+            padding: 0 12px;
+            height: 28px;
+            border: 1px solid #bbb;
+            border-radius: 4px;
+            background: #fff;
+            color: var(--color-text);
+            font-size: 12px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .toolbar button:hover:not(:disabled) { background: #dee2e6; }
+
+        .toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        .toolbar-sep { width: 1px; height: 22px; background: #bbb; margin: 0 4px; }
+
+        .toolbar .file-btn-wrap {
+            position: relative;
+            display: inline-block;
+        }
+
+        .toolbar .file-btn-wrap input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .toolbar .file-btn-wrap button { pointer-events: none; }
+
+        .toolbar .loaded-filename {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: #4ec9b0;
+            max-width: 220px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding: 2px 6px;
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 3px;
+        }
+
+        .toolbar .loaded-filename:empty { display: none; }
+
+        /* ===== Workspace — horizontal split ================================ */
+        .workspace {
+            display: flex;
+            flex-direction: row;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        /* ===== Editor pane (LH) ============================================ */
+        .editor-pane {
+            display: flex;
+            flex-direction: column;
+            flex: 0 0 55%;
+            min-width: 200px;
+            overflow: hidden;
+            background: #1e1e1e;
+        }
+
+        .editor-inner {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* CodeMirror container — fills the editor-inner area */
+        .editor-text-wrap {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .editor-text-wrap .cm-editor {
+            height: 100%;
+        }
+
+        .editor-statusbar {
+            height: 22px;
+            background: #007acc;
+            color: #fff;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        /* ===== Validation splitter (drag bar above validation panel) ======== */
+        .val-splitter {
+            flex-shrink: 0;
+            height: var(--splitter-size);
+            background: #2a5a8c;
+            cursor: ns-resize;
+            z-index: 10;
+        }
+
+        .val-splitter:hover,
+        .val-splitter.dragging { background: #0078d4; }
+
+        /* ===== Validation footer (resizable at bottom of XML editor) ======== */
+        .validation-footer {
+            height: 68px;
+            min-height: 28px;
+            background: #1a3a5c;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: #c0c0c0;
+            overflow-y: auto;
+            flex-shrink: 0;
+            line-height: 1.6;
+        }
+
+        .validation-footer .validation-list { list-style: none; }
+
+        .validation-footer .validation-list li {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            padding: 2px 10px;
+            border-bottom: 1px solid #1a4a6c;
+            cursor: pointer;
+        }
+
+        .validation-footer .validation-list li:hover { background: #1a4a6c; }
+
+        .validation-footer .val-ok {
+            color: #4ade80;
+            padding: 4px 10px;
+        }
+
+        .v-badge {
+            display: inline-block;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+
+        .v-error   { background: var(--color-error-bg);   color: var(--color-error-text);   }
+        .v-warning { background: var(--color-warning-bg);  color: var(--color-warning-text); }
+        .v-info    { background: var(--color-info-bg);     color: var(--color-info-text);    }
+
+        .v-line { color: var(--color-muted); font-size: 10px; flex-shrink: 0; }
+
+        /* ===== Workspace splitter ========================================== */
+        .ws-splitter {
+            flex-shrink: 0;
+            width: var(--splitter-size);
+            cursor: col-resize;
+            background: #c8c8c8;
+            transition: background 0.15s;
+            z-index: 10;
+        }
+
+        .ws-splitter:hover,
+        .ws-splitter.dragging { background: #0078d4; }
+
+        /* ===== Function grid pane (RH) ===================================== */
+        .fn-grid-pane {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 200px;
+            background: var(--color-bg);
+            overflow: hidden;
+        }
+
+        .fn-grid-header {
+            background: #e9ecef;
+            color: var(--color-muted);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 12px;
+            flex-shrink: 0;
+            border-bottom: 1px solid var(--color-border);
+            gap: 2px;
+        }
+
+        .fdi-tools-empty {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--color-muted);
+            font-size: 11px;
+            background: #f8f9fa;
+        }
+
+        .fdi-tools-empty.hidden { display: none; }
+
+        .fn-grid-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            background: var(--color-bg);
+        }
+
+        .fn-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+            gap: 6px;
+        }
+
+        /* Individual function button */
+        .fn-btn {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 56px;
+            padding: 6px 4px;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            background: #fff;
+            cursor: pointer;
+            transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+            text-align: center;
+            user-select: none;
+        }
+
+        .fn-btn:hover {
+            border-color: #0078d4;
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.15);
+        }
+
+        .fn-btn.fn-defined {
+            background: #dbeafe;
+            border-color: #93c5fd;
+        }
+
+        .fn-btn.fn-defined:hover {
+            background: #bfdbfe;
+            border-color: #0078d4;
+        }
+
+        .fn-btn .fn-number {
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--color-muted);
+            margin-bottom: 2px;
+        }
+
+        .fn-btn .fn-name {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--color-text);
+            line-height: 1.2;
+            word-break: break-word;
+            max-width: 100%;
+        }
+
+        .fn-btn .fn-kind-badge {
+            font-size: 8px;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 1px 4px;
+            border-radius: 3px;
+            margin-top: 2px;
+            letter-spacing: 0.5px;
+        }
+
+        .fn-kind-binary {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .fn-kind-momentary {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .fn-btn.fn-empty .fn-name {
+            color: #999;
+            font-weight: 400;
+            font-style: italic;
+        }
+
+        /* ===== Function edit popover ======================================= */
+        .fn-popover-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.25);
+            z-index: 500;
+        }
+
+        .fn-popover-overlay.visible { display: flex; align-items: center; justify-content: center; }
+
+        .fn-popover {
+            background: #fff;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+            padding: 16px 20px;
+            width: 280px;
+            max-width: 90vw;
+        }
+
+        .fn-popover h3 {
+            font-size: 14px;
+            margin-bottom: 12px;
+            color: var(--color-text);
+        }
+
+        .fn-popover label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--color-muted);
+            margin-bottom: 4px;
+            margin-top: 10px;
+        }
+
+        .fn-popover label:first-of-type { margin-top: 0; }
+
+        .fn-popover input[type="text"],
+        .fn-popover select {
+            width: 100%;
+            height: 30px;
+            padding: 0 8px;
+            border: 1px solid var(--color-border);
+            border-radius: 4px;
+            font-size: 13px;
+            background: #fff;
+            color: var(--color-text);
+        }
+
+        .fn-popover input[type="text"]:focus,
+        .fn-popover select:focus {
+            outline: none;
+            border-color: #0078d4;
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+        }
+
+        .fn-popover-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .fn-popover-actions button {
+            flex: 1;
+            height: 30px;
+            border: 1px solid var(--color-border);
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.12s;
+        }
+
+        .fn-popover-actions .btn-save {
+            background: #0078d4;
+            color: #fff;
+            border-color: #0078d4;
+        }
+
+        .fn-popover-actions .btn-save:hover { background: #005fa3; }
+
+        .fn-popover-actions .btn-cancel {
+            background: #e9ecef;
+            color: var(--color-text);
+        }
+
+        .fn-popover-actions .btn-cancel:hover { background: #dee2e6; }
+
+        .fn-popover-actions .btn-remove {
+            background: #fee2e2;
+            color: #dc2626;
+            border-color: #fca5a5;
+            flex: 0 0 auto;
+            padding: 0 10px;
+        }
+
+        .fn-popover-actions .btn-remove:hover { background: #fecaca; }
+
+        /* ===== FDI Tools toggle buttons ====================================== */
+        .fdi-view-toggle {
+            display: flex;
+            gap: 2px;
+        }
+
+        .fdi-toggle-btn {
+            padding: 4px 10px;
+            font-size: 11px;
+            border: 1px solid var(--color-border);
+            border-radius: 4px;
+            background: var(--color-surface);
+            color: var(--color-muted);
+            cursor: pointer;
+            font-family: var(--font-mono);
+            font-weight: 600;
+            line-height: 18px;
+        }
+
+        .fdi-toggle-btn:hover { background: #dee2e6; color: var(--color-text); border-color: #bbb; }
+
+        .fdi-toggle-btn.active {
+            background: var(--color-primary);
+            color: #fff;
+            border-color: var(--color-primary-dark);
+        }
+
+        /* ===== FDI Tools content (Array view) ================================ */
+        .fdi-tools-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--color-bg);
+        }
+
+        .fdi-tools-content.hidden { display: none; }
+
+        .fdi-tools-copybar {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            padding: 3px 6px;
+            background: #e9ecef;
+            border-bottom: 1px solid var(--color-border);
+            flex-shrink: 0;
+        }
+
+        .fdi-tools-copybar .fdi-byte-count {
+            font-size: 11px;
+            color: var(--color-muted);
+            font-family: var(--font-mono);
+            margin-right: auto;
+        }
+
+        .fdi-tools-copybar button {
+            padding: 1px 10px;
+            font-size: 10px;
+            border: 1px solid #bbb;
+            border-radius: 3px;
+            background: var(--color-surface);
+            color: var(--color-text);
+            cursor: pointer;
+            font-family: var(--font-mono);
+        }
+
+        .fdi-tools-copybar button:hover { background: #dee2e6; }
+
+        .fdi-tools-cm {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .fdi-tools-cm .cm-editor { height: 100%; }
+
+    </style>
+</head>
+<body>
+
+<div class="app-shell">
+
+    <header class="app-header">
+        <h1>FDI Editor</h1>
+    </header>
+
+    <!-- ===== Toolbar ====================================================== -->
+    <div class="toolbar">
+
+        <!-- Open file -->
+        <div class="file-btn-wrap">
+            <button>&#x1F4C2; Open XML</button>
+            <input type="file" id="file-input" accept=".xml" title="Open FDI XML file">
+        </div>
+
+        <span class="loaded-filename" id="loaded-filename" title="Loaded XML file"></span>
+
+        <div class="toolbar-sep"></div>
+
+        <button id="btn-export-xml" disabled>&#x1F4BE; Export XML</button>
+        <button id="btn-basic-xml">&#x2726; Generate Basic XML</button>
+
+        <div class="toolbar-sep"></div>
+
+        <button id="btn-format"  disabled>&#x21CC; Format</button>
+        <button id="btn-clear">&#x2715; Clear</button>
+
+    </div>
+
+    <!-- ===== Workspace ==================================================== -->
+    <div class="workspace" id="workspace">
+
+        <!-- Editor pane (LH) -->
+        <div class="editor-pane" id="editor-pane">
+
+            <div class="editor-inner" id="editor-inner">
+                <div class="editor-text-wrap" id="cm-host">
+                    <!-- CodeMirror 6 instance created by JS -->
+                </div>
+            </div>
+
+            <div class="editor-statusbar" id="editor-statusbar">
+                <span id="status-bytes">0 bytes (UTF-8)</span>
+                <span id="status-chars">0 chars</span>
+                <span id="status-lines">0 lines</span>
+                <span id="status-cursor">Ln 1, Col 1</span>
+            </div>
+
+            <!-- Validation splitter + footer -->
+            <div class="val-splitter" id="val-splitter"></div>
+            <div class="validation-footer" id="validation-footer">
+                <div class="val-ok" id="validation-ok">No issues detected</div>
+                <ul class="validation-list" id="validation-list"></ul>
+            </div>
+
+        </div>
+
+        <!-- Splitter -->
+        <div class="ws-splitter" id="ws-splitter"></div>
+
+        <!-- FDI Tools pane (RH) -->
+        <div class="fn-grid-pane" id="fn-grid-pane">
+            <div class="fn-grid-header">
+                <span>FDI Tools</span>
+                <div class="fdi-view-toggle">
+                    <button class="fdi-toggle-btn active" id="btn-fdi-fnmap" title="Function grid view">⊞ Function Map</button>
+                    <button class="fdi-toggle-btn"        id="btn-fdi-array" title="C byte array for openlcb_user_config.c">[ ] Array</button>
+                </div>
+            </div>
+            <div class="fdi-tools-empty" id="fdi-tools-empty">Enter FDI XML to see tools</div>
+            <div class="fn-grid-scroll" id="fn-grid-scroll" style="display:none">
+                <div class="fn-grid" id="fn-grid"></div>
+            </div>
+            <div class="fdi-tools-content hidden" id="fdi-tools-content"></div>
+        </div>
+
+    </div>
+
+</div><!-- /.app-shell -->
+
+<!-- ===== Edit popover (modal) ============================================= -->
+<div class="fn-popover-overlay" id="fn-popover-overlay">
+    <div class="fn-popover" id="fn-popover">
+        <h3 id="pop-title">Edit Function</h3>
+
+        <label for="pop-name">Name</label>
+        <input type="text" id="pop-name" placeholder="e.g. Headlight" maxlength="64" autocomplete="off">
+
+        <label for="pop-kind">Kind</label>
+        <select id="pop-kind">
+            <option value="binary">Binary (toggle on/off)</option>
+            <option value="momentary">Momentary (press-and-hold)</option>
+        </select>
+
+        <div class="fn-popover-actions">
+            <button class="btn-remove" id="pop-remove" title="Remove this function from the FDI">&#x2715;</button>
+            <button class="btn-cancel" id="pop-cancel">Cancel</button>
+            <button class="btn-save" id="pop-save">Save</button>
+        </div>
+    </div>
+</div>
+
+<script src="../vendor/xmllint/xmllint_patched.js"></script>
+<script src="../vendor/xmllint/xmllint_api.js"></script>
+<script src="js/fdi_validator.js"></script>
+<script src="js/fdi_function_grid.js"></script>
+<script>
+
+/* =========================================================================
+ * fdi_editor.html — application shell script
+ * ========================================================================= */
+
+'use strict';
+
+/* ---------- Element refs -------------------------------------------------- */
+var elEditor      = createCMEditor(document.getElementById('cm-host'), {
+    placeholder: 'Paste or open an FDI XML file to begin...',
+    schema:      FDI_SCHEMA,
+    validator:   FdiValidator
+});
+var elValList     = document.getElementById('validation-list');
+var elValFooter   = document.getElementById('validation-footer');
+var elValOk       = document.getElementById('validation-ok');
+var elStatusBytes = document.getElementById('status-bytes');
+var elStatusChars = document.getElementById('status-chars');
+var elStatusLines = document.getElementById('status-lines');
+var elStatusCur   = document.getElementById('status-cursor');
+var btnFormat     = document.getElementById('btn-format');
+var btnClear      = document.getElementById('btn-clear');
+var btnExportXml     = document.getElementById('btn-export-xml');
+var fileInput     = document.getElementById('file-input');
+var elWorkspace   = document.getElementById('workspace');
+var elEditorPane  = document.getElementById('editor-pane');
+var elSplitter    = document.getElementById('ws-splitter');
+
+/* ---------- Embedded mode detection --------------------------------------- */
+var _isEmbedded = window.parent !== window;
+var _postTimer  = null;
+
+function _postXmlToParent() {
+
+    if (!_isEmbedded) { return; }
+
+    clearTimeout(_postTimer);
+    _postTimer = setTimeout(function () {
+
+        window.parent.postMessage({
+            type:     'xmlChanged',
+            xml:      elEditor.value,
+            filename: _loadedFilename || null
+        }, '*');
+
+    }, 300);
+
+}
+
+/* ---------- State --------------------------------------------------------- */
+var currentXml      = '';
+var _loadedFilename = '';
+var _suppressGridSync = false;   /* prevent XML→grid→XML loop */
+
+var elFilename = document.getElementById('loaded-filename');
+
+function _setFilename(name) {
+
+    _loadedFilename = name || '';
+    elFilename.textContent = _loadedFilename;
+    elFilename.title       = _loadedFilename ? 'Loaded: ' + _loadedFilename : '';
+
+}
+
+/* ---------- File open ----------------------------------------------------- */
+fileInput.addEventListener('change', function (e) {
+
+    var file = e.target.files[0];
+    if (!file) { return; }
+
+    _setFilename(file.name);
+
+    var reader = new FileReader();
+    reader.onload = function (ev) {
+
+        elEditor.value = ev.target.result;
+        onEditorChange();
+
+    };
+    reader.readAsText(file);
+    fileInput.value = '';
+
+});
+
+/* ---------- Editor events ------------------------------------------------- */
+elEditor.onChange(onEditorChange);
+elEditor.onCursorChange(updateCursor);
+
+var _validateTimer = null;
+var _gridSyncTimer = null;
+
+function onEditorChange() {
+
+    currentXml = elEditor.value;
+    _updateLineNumbers();
+    _updateStatusBar();
+    _updateHighlight();
+
+    var hasContent = currentXml.trim().length > 0;
+    btnFormat.disabled    = !hasContent;
+
+    /* Toggle empty-state placeholder vs grid/content in the RH pane */
+    _setFdiToolsView(_fdiToolsView);
+    btnExportXml.disabled = !hasContent;
+
+    /* Auto-validate after a short debounce */
+    clearTimeout(_validateTimer);
+    if (hasContent) {
+        _validateTimer = setTimeout(validate, 500);
+    }
+
+    /* Sync XML → function grid (debounced, skip if grid triggered this) */
+    if (!_suppressGridSync) {
+
+        clearTimeout(_gridSyncTimer);
+        _gridSyncTimer = setTimeout(function () {
+
+            FdiFunctionGrid.syncFromXml(currentXml);
+
+        }, 300);
+
+    }
+
+    /* Notify parent of content change (embedded mode) */
+    if (_isEmbedded) { _postXmlToParent(); }
+
+    /* Persist state */
+    if (typeof _saveState === 'function') { _saveState(); }
+
+}
+
+/* ---------- Cursor & status bar ------------------------------------------ */
+/* CodeMirror handles syntax highlighting, line numbers, scrolling, and
+ * tab-key indentation natively — no overlay or manual gutter needed. */
+
+function updateCursor() {
+
+    var lc = elEditor.posToLineCol(elEditor.selectionStart);
+    elStatusCur.textContent = 'Ln ' + lc.line + ', Col ' + lc.col;
+
+}
+
+function _updateStatusBar() {
+
+    var text  = elEditor.value;
+    var chars = text.length;
+    var lines = elEditor.lineCount;
+    var bytes = elEditor.byteCount;
+
+    elStatusBytes.textContent = bytes.toLocaleString() + ' bytes (UTF-8)';
+    elStatusChars.textContent = chars.toLocaleString() + ' chars';
+    elStatusLines.textContent = lines.toLocaleString() + ' lines';
+
+}
+
+/* Stubs — no longer needed with CodeMirror but called from onEditorChange */
+function _updateLineNumbers() { }
+function _updateHighlight() { }
+
+/* ---------- Validate ------------------------------------------------------ */
+
+async function validate() {
+
+    var xml = elEditor.value.trim();
+
+    if (!xml) {
+
+        elValList.innerHTML = '';
+        elValOk.textContent = 'No issues detected';
+        elValOk.style.display = '';
+
+        if (_isEmbedded) {
+            window.parent.postMessage({ type: 'validationStatus', view: 'fdi', errors: 0, warnings: 0 }, '*');
+        }
+        return;
+
+    }
+
+    var issues = await FdiValidator.validate(xml);
+
+    elValList.innerHTML = '';
+
+    if (issues.length === 0) {
+
+        elValOk.textContent = 'No issues detected';
+        elValOk.style.display = '';
+
+    } else {
+
+        elValOk.style.display = 'none';
+        issues.forEach(function (issue) {
+            elValList.appendChild(_buildIssueItem(issue));
+        });
+
+    }
+
+    /* Report validation status to parent shell for badge display */
+    if (_isEmbedded) {
+
+        var errorCount   = issues.filter(function (i) { return i.severity === 'error'; }).length;
+        var warningCount = issues.filter(function (i) { return i.severity === 'warning'; }).length;
+
+        window.parent.postMessage({
+            type:     'validationStatus',
+            view:     'fdi',
+            errors:   errorCount,
+            warnings: warningCount
+        }, '*');
+
+    }
+
+}
+
+function _buildIssueItem(issue) {
+
+    var li = document.createElement('li');
+
+    var badge = document.createElement('span');
+    badge.className   = 'v-badge v-' + issue.severity;
+    badge.textContent = issue.severity;
+    li.appendChild(badge);
+
+    if (issue.line) {
+
+        var ln = document.createElement('span');
+        ln.className   = 'v-line';
+        ln.textContent = 'Ln ' + issue.line + (issue.col ? ':' + issue.col : '');
+        li.appendChild(ln);
+
+        li.addEventListener('click', function () { _jumpToLine(issue.line); });
+
+    }
+
+    var msg = document.createElement('span');
+    msg.textContent = issue.message;
+    li.appendChild(msg);
+
+    return li;
+
+}
+
+function _jumpToLine(lineNum) {
+
+    var doc  = elEditor.view.state.doc;
+    var line = doc.line(Math.min(lineNum, doc.lines));
+    elEditor.setSelectionRange(line.from, line.from);
+    elEditor.view.dispatch({
+        effects: CM.EditorView.scrollIntoView(line.from, { y: 'center' })
+    });
+    updateCursor();
+
+}
+
+/* ---------- Format -------------------------------------------------------- */
+btnFormat.addEventListener('click', function () { elEditor.format(); });
+
+/* ---------- Clear --------------------------------------------------------- */
+btnClear.addEventListener('click', function () {
+
+    elEditor.value  = '';
+    elValList.innerHTML = '';
+    elValOk.textContent = 'No issues detected';
+    elValOk.style.display = '';
+    btnFormat.disabled    = true;
+    btnExportXml.disabled = true;
+    _setFilename('');
+
+    /* Reset the FDI Tools right-hand pane */
+    FdiFunctionGrid.syncFromXml('');
+    elFdiToolsContent.innerHTML = '';
+
+    onEditorChange();
+
+});
+
+/* ---------- Export XML ---------------------------------------------------- */
+btnExportXml.addEventListener('click', function () {
+
+    var xml = elEditor.value;
+    if (!xml.trim()) { return; }
+
+    var blob = new Blob([xml], { type: 'application/xml' });
+    var url  = URL.createObjectURL(blob);
+    var a    = document.createElement('a');
+
+    a.href     = url;
+    a.download = _loadedFilename && _loadedFilename !== '(Basic template)'
+        ? _loadedFilename
+        : 'fdi.xml';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+});
+
+/* ---------- Generate Basic XML ------------------------------------------- */
+
+var BASIC_FDI_XML =
+'<?xml version="1.0"?>\n' +
+'<fdi xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"\n' +
+'     xsi:noNamespaceSchemaLocation="http://openlcb.org/schema/fdi/1/1/fdi.xsd">\n' +
+'\n' +
+'  <segment space="249" origin="0">\n' +
+'    <group>\n' +
+'      <name>Train Functions</name>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>Headlight</name>\n' +
+'        <number>0</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>Rear light</name>\n' +
+'        <number>1</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="momentary">\n' +
+'        <name>Horn</name>\n' +
+'        <number>2</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="momentary">\n' +
+'        <name>Bell</name>\n' +
+'        <number>3</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F4</name>\n' +
+'        <number>4</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F5</name>\n' +
+'        <number>5</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F6</name>\n' +
+'        <number>6</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F7</name>\n' +
+'        <number>7</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F8</name>\n' +
+'        <number>8</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F9</name>\n' +
+'        <number>9</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F10</name>\n' +
+'        <number>10</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F11</name>\n' +
+'        <number>11</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F12</name>\n' +
+'        <number>12</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F13</name>\n' +
+'        <number>13</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F14</name>\n' +
+'        <number>14</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F15</name>\n' +
+'        <number>15</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F16</name>\n' +
+'        <number>16</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F17</name>\n' +
+'        <number>17</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F18</name>\n' +
+'        <number>18</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F19</name>\n' +
+'        <number>19</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F20</name>\n' +
+'        <number>20</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F21</name>\n' +
+'        <number>21</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F22</name>\n' +
+'        <number>22</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F23</name>\n' +
+'        <number>23</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F24</name>\n' +
+'        <number>24</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F25</name>\n' +
+'        <number>25</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F26</name>\n' +
+'        <number>26</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F27</name>\n' +
+'        <number>27</number>\n' +
+'      </function>\n' +
+'      <function size="1" kind="binary">\n' +
+'        <name>F28</name>\n' +
+'        <number>28</number>\n' +
+'      </function>\n' +
+'    </group>\n' +
+'  </segment>\n' +
+'\n' +
+'</fdi>';
+
+document.getElementById('btn-basic-xml').addEventListener('click', function () {
+
+    if (elEditor.value.trim().length > 0) {
+        if (!confirm('Replace the current content with a basic FDI template?')) { return; }
+    }
+
+    elEditor.value = BASIC_FDI_XML;
+    _setFilename('(Basic template)');
+    onEditorChange();
+    elEditor.focus();
+
+});
+
+/* ---------- Splitter drag ------------------------------------------------- */
+
+var _dragging = false;
+
+elSplitter.addEventListener('mousedown', function (e) {
+
+    e.preventDefault();
+    _dragging = true;
+    elSplitter.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+});
+
+window.addEventListener('mousemove', function (e) {
+
+    if (!_dragging) { return; }
+
+    var rect = elWorkspace.getBoundingClientRect();
+    var x    = e.clientX - rect.left;
+    var min  = 200;
+    var max  = rect.width - 200;
+
+    x = Math.max(min, Math.min(max, x));
+
+    elEditorPane.style.flexBasis = x + 'px';
+    elEditorPane.style.flexGrow  = '0';
+
+});
+
+window.addEventListener('mouseup', function () {
+
+    if (!_dragging) { return; }
+    _dragging = false;
+    elSplitter.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    _saveState();
+
+});
+
+/* ---------- Validation splitter drag -------------------------------------- */
+
+var _valDragging = false;
+var _valStartY   = 0;
+var _valStartH   = 0;
+var _valSplitter = document.getElementById('val-splitter');
+
+_valSplitter.addEventListener('mousedown', function (e) {
+
+    e.preventDefault();
+    _valDragging = true;
+    _valSplitter.classList.add('dragging');
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+    _valStartY = e.clientY;
+    _valStartH = elValFooter.getBoundingClientRect().height;
+
+});
+
+window.addEventListener('mousemove', function (e) {
+
+    if (!_valDragging) { return; }
+
+    var delta = _valStartY - e.clientY;
+    var newH  = Math.max(28, _valStartH + delta);
+    elValFooter.style.height = newH + 'px';
+
+});
+
+window.addEventListener('mouseup', function () {
+
+    if (!_valDragging) { return; }
+    _valDragging = false;
+    _valSplitter.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    _saveState();
+
+});
+
+/* ---------- Function grid → XML callback --------------------------------- */
+
+/**
+ * Called by FdiFunctionGrid when the user edits a function visually.
+ * Receives the full array of 29 slot objects and rebuilds the XML.
+ */
+function onFunctionGridChanged(slots) {
+
+    _suppressGridSync = true;
+
+    elEditor.value = FdiFunctionGrid.buildXmlFromSlots(slots);
+    _setFilename('');
+    onEditorChange();
+
+    /* Re-enable grid sync after the change has propagated */
+    setTimeout(function () { _suppressGridSync = false; }, 50);
+
+}
+
+/* ---------- Init ---------------------------------------------------------- */
+
+FdiFunctionGrid.init(
+    document.getElementById('fn-grid'),
+    document.getElementById('fn-popover-overlay'),
+    onFunctionGridChanged
+);
+
+_updateStatusBar();
+
+/* ---------- FDI Tools — view toggle (Function Map | Array) --------------- */
+
+var _fdiToolsView = 'fnmap';
+var _fdiArrayViewer = null;
+
+var elFdiToolsContent = document.getElementById('fdi-tools-content');
+var elFdiToolsEmpty   = document.getElementById('fdi-tools-empty');
+var elFnGridScroll    = document.getElementById('fn-grid-scroll');
+
+document.getElementById('btn-fdi-fnmap').addEventListener('click', function () {
+
+    _setFdiToolsView('fnmap');
+
+});
+
+document.getElementById('btn-fdi-array').addEventListener('click', function () {
+
+    _setFdiToolsView('array');
+
+});
+
+function _setFdiToolsView(view) {
+
+    _fdiToolsView = view;
+
+    var hasContent = elEditor.value.trim().length > 0;
+
+    document.getElementById('btn-fdi-fnmap').classList.toggle('active', view === 'fnmap');
+    document.getElementById('btn-fdi-array').classList.toggle('active', view === 'array');
+
+    /* When editor is empty, show the empty placeholder instead of grid/array */
+    if (!hasContent) {
+        elFnGridScroll.style.display = 'none';
+        elFdiToolsContent.classList.add('hidden');
+        elFdiToolsEmpty.classList.remove('hidden');
+        return;
+    }
+
+    elFdiToolsEmpty.classList.add('hidden');
+
+    if (view === 'fnmap') {
+
+        elFnGridScroll.style.display = '';
+        elFdiToolsContent.classList.add('hidden');
+
+    } else {
+
+        elFnGridScroll.style.display = 'none';
+        elFdiToolsContent.classList.remove('hidden');
+        _renderFdiArray();
+
+    }
+
+    _saveState();
+
+}
+
+function _renderFdiArray() {
+
+    var xmlRawText = elEditor.value.trim();
+
+    if (!xmlRawText) {
+
+        elFdiToolsContent.innerHTML = '<div style="color:#888;font-style:italic;padding:20px;font-size:13px;">No FDI XML to convert</div>';
+        return;
+
+    }
+
+    function isPrintable(ch) {
+        var code = ch.charCodeAt(0);
+        return code >= 32 && code <= 126;
+    }
+
+    var rawLines = xmlRawText.split(/\r\n|\n|\r/);
+    var resultLines = [];
+    var totalChars = 0;
+
+    resultLines.push('// FDI (Function Description Information) byte array.');
+    resultLines.push('// Paste this into the .fdi field of the node_parameters_t struct');
+    resultLines.push('// in openlcb_user_config.c to define the train function descriptions.');
+    resultLines.push('//');
+    resultLines.push('// NOTE: THIS IS FOR CONVENIENCE OF THOSE MANUALLY BUILDING THEIR OPENLCB_USER_CONFIG.C FILE.');
+    resultLines.push('');
+    resultLines.push('.fdi = {');
+
+    rawLines.forEach(function (originalLine) {
+
+        var forSkip = originalLine
+            .replace(/[^\x20-\x7E]/g, '')
+            .replace(/\s+/g, '');
+        if (forSkip.length === 0) { return; }
+
+        var firstIdx = -1;
+        var lastIdx  = -1;
+
+        for (var i = 0; i < originalLine.length; i++) {
+            var ch = originalLine[i];
+            if (isPrintable(ch) && !/\s/.test(ch)) { firstIdx = i; break; }
+        }
+        for (var i = originalLine.length - 1; i >= 0; i--) {
+            var ch = originalLine[i];
+            if (isPrintable(ch) && !/\s/.test(ch)) { lastIdx = i; break; }
+        }
+        if (firstIdx === -1 || lastIdx === -1 || firstIdx > lastIdx) { return; }
+
+        var converted = '';
+
+        for (var i = firstIdx; i <= lastIdx; i++) {
+            var ch = originalLine[i];
+            if (!isPrintable(ch)) { continue; }
+            var hex = '0x' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0');
+            converted += hex + ', ';
+            totalChars++;
+        }
+
+        var comment = originalLine.slice(firstIdx, lastIdx + 1).replace(/^\s+|\s+$/g, '');
+        converted += '  // ' + comment;
+
+        resultLines.push(converted);
+
+    });
+
+    resultLines.push('0x00    // String terminating null');
+    totalChars += 1;
+
+    resultLines.push('},');
+    resultLines.push('');
+    resultLines.push('#define USER_FDI_ARRAY_SIZE  ' + totalChars + '  // Total bytes including null terminator');
+
+    var text = resultLines.join('\n');
+
+    /* Build the UI */
+    elFdiToolsContent.innerHTML = '';
+
+    var copyBar = document.createElement('div');
+    copyBar.className = 'fdi-tools-copybar';
+
+    var countLabel = document.createElement('span');
+    countLabel.className = 'fdi-byte-count';
+    countLabel.textContent = 'Total bytes (including null): ' + totalChars;
+    copyBar.appendChild(countLabel);
+
+    var copyBtn = document.createElement('button');
+    copyBtn.textContent = 'Copy';
+    copyBtn.addEventListener('click', function () {
+        navigator.clipboard.writeText(text).then(function () {
+            copyBtn.textContent = 'Copied!';
+            setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+    });
+    copyBar.appendChild(copyBtn);
+    elFdiToolsContent.appendChild(copyBar);
+
+    var cmContainer = document.createElement('div');
+    cmContainer.className = 'fdi-tools-cm';
+    elFdiToolsContent.appendChild(cmContainer);
+
+    _fdiArrayViewer = createCMReadonly(cmContainer);
+    _fdiArrayViewer.value = text;
+
+}
+
+/* ---------- Persistence (localStorage) ------------------------------------ */
+
+var _STORAGE_KEY = 'fdi_editor_state';
+var _saveTimer   = null;
+
+function _saveState() {
+
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(function () {
+
+        var state = {
+            xml:           elEditor.value,
+            filename:      _loadedFilename || '',
+            splitterPx:    elEditorPane.style.flexBasis || '',
+            valHeight:     elValFooter.style.height || '',
+            fdiToolsView:  _fdiToolsView
+        };
+
+        try { localStorage.setItem(_STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* quota */ }
+
+    }, 500);
+
+}
+
+function _restoreState() {
+
+    var raw;
+    try { raw = localStorage.getItem(_STORAGE_KEY); } catch (e) { return; }
+    if (!raw) { return; }
+
+    var state;
+    try { state = JSON.parse(raw); } catch (e) { return; }
+
+    /* Splitter positions */
+    if (state.splitterPx) {
+        elEditorPane.style.flexBasis = state.splitterPx;
+        elEditorPane.style.flexGrow  = '0';
+    }
+
+    if (state.valHeight) {
+        elValFooter.style.height = state.valHeight;
+    }
+
+    /* XML content */
+    if (state.xml) {
+        elEditor.value = state.xml;
+        if (state.filename) { _setFilename(state.filename); }
+        onEditorChange();
+    }
+
+    /* FDI tools view */
+    if (state.fdiToolsView) {
+        _setFdiToolsView(state.fdiToolsView);
+    }
+
+}
+
+_restoreState();
+
+/* ---------- Embedded mode (iframe inside Node Wizard) --------------------- */
+
+if (_isEmbedded) {
+
+    var appHeader = document.querySelector('.app-header');
+    if (appHeader) { appHeader.style.display = 'none'; }
+
+    window.addEventListener('message', function (e) {
+
+        if (!e.data) { return; }
+
+        if (e.data.type === 'loadXml') {
+
+            if (e.data.xml && e.data.xml.trim().length > 0) {
+
+                elEditor.value = e.data.xml;
+                if (e.data.filename) { _setFilename(e.data.filename); }
+                onEditorChange();
+
+            }
+
+        }
+
+    });
+
+    window.parent.postMessage({ type: 'ready', view: 'fdi' }, '*');
+
+    if (elEditor.value.trim().length > 0) {
+        _postXmlToParent();
+    }
+
+}
+
+</script>
+</body>
+</html>

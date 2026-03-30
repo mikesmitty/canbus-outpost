@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Callback Editor — OpenLcbCLib</title>
+    <link rel="stylesheet" href="callbacks.css">
+</head>
+<body>
+
+    <header class="page-header">
+        <h2>Application Callbacks</h2>
+        <p class="panel-desc">Select the callback functions your application needs. Sections are shown based on the selected node type.</p>
+    </header>
+
+    <div class="content-row">
+
+        <main class="callbacks-panel">
+            <div class="callbacks-inner" id="callbacks-inner">
+                <div id="callback-sections"></div>
+            </div>
+        </main>
+
+        <aside class="detail-panel" id="detail-panel">
+            <div class="detail-panel-placeholder" id="detail-placeholder">Hover over a callback to see details</div>
+            <div class="detail-content" id="detail-content" style="display:none">
+                <div class="detail-section detail-prototype" id="detail-prototype"></div>
+                <div class="detail-section">
+                    <div class="detail-label">Description</div>
+                    <div class="detail-text" id="detail-desc"></div>
+                </div>
+                <div class="detail-section" id="detail-detail-section" style="display:none">
+                    <div class="detail-label">Details</div>
+                    <div class="detail-text" id="detail-detail"></div>
+                </div>
+                <div class="detail-section detail-meta" id="detail-meta"></div>
+            </div>
+        </aside>
+
+    </div>
+
+    <script src="js/callback_defs.js"></script>
+
+    <script>
+
+    /* ===================================================================== */
+    /* State                                                                 */
+    /* ===================================================================== */
+
+    var _currentNodeType = null;
+    var _allGroupState   = {};   /* { 'cb-can': { checked: ['on_rx'] }, ... } */
+
+    /* Detail panel DOM refs */
+    var _elDetailPlaceholder   = document.getElementById('detail-placeholder');
+    var _elDetailContent       = document.getElementById('detail-content');
+    var _elDetailPrototype     = document.getElementById('detail-prototype');
+    var _elDetailDesc          = document.getElementById('detail-desc');
+    var _elDetailDetailSection = document.getElementById('detail-detail-section');
+    var _elDetailDetail        = document.getElementById('detail-detail');
+    var _elDetailMeta          = document.getElementById('detail-meta');
+
+    /* ===================================================================== */
+    /* Show detail for a callback in the right panel                        */
+    /* ===================================================================== */
+
+    function _showDetail(group, fn) {
+
+        _elDetailPlaceholder.style.display = 'none';
+        _elDetailContent.style.display     = 'block';
+
+        /* Full C prototype */
+        var fullName = group.functionPrefix + '_' + fn.name;
+        var proto    = fn.returnType + ' ' + fullName + '(' + fn.params + ')';
+        _elDetailPrototype.textContent = proto;
+
+        /* Description */
+        _elDetailDesc.textContent = fn.description;
+
+        /* Extended detail */
+        if (fn.detail) {
+
+            _elDetailDetailSection.style.display = 'block';
+            _elDetailDetail.textContent = fn.detail;
+
+        } else {
+
+            _elDetailDetailSection.style.display = 'none';
+
+        }
+
+        /* Meta info */
+        var meta = [];
+
+        if (fn.returnType !== 'void') {
+            meta.push('Returns: ' + fn.returnType);
+        }
+
+        meta.push('Config field: ' + group.diStruct + '.' + fn.configField);
+        meta.push('Header: ' + group.filePrefix + '.h');
+
+        if (fn.required) {
+            meta.push('This callback is required — it is always included.');
+        }
+
+        _elDetailMeta.innerHTML = meta.map(function (m) {
+
+            return '<div class="detail-meta-row">' + _escHtml(m) + '</div>';
+
+        }).join('');
+
+    }
+
+    function _escHtml(str) {
+
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+
+    }
+
+    function _showGroupDetail(group) {
+
+        _elDetailPlaceholder.style.display   = 'none';
+        _elDetailContent.style.display       = 'block';
+        _elDetailPrototype.textContent       = '';
+        _elDetailDesc.textContent            = group.groupDetail || group.description;
+        _elDetailDetailSection.style.display = 'none';
+        _elDetailMeta.innerHTML              = '';
+
+    }
+
+    function _clearDetail() {
+
+        _elDetailContent.style.display     = 'none';
+        _elDetailPlaceholder.style.display = 'block';
+
+    }
+
+    /* Base groups for each node type (before add-on filtering) */
+    var _baseGroups = {
+        'basic':            ['cb-can', 'cb-olcb', 'cb-events'],
+        'typical':          ['cb-can', 'cb-olcb', 'cb-events', 'cb-config-mem'],
+        'train':            ['cb-can', 'cb-olcb', 'cb-events', 'cb-config-mem', 'cb-train'],
+        'train-controller': ['cb-can', 'cb-olcb', 'cb-events', 'cb-train']
+    };
+
+    /* Current add-on selections from the config editor */
+    var _addons = { broadcast: 'none', firmware: false };
+
+    /*
+     * Maps add-on keys to the callback group they unlock.
+     * Each entry: { key: add-on property name, test: predicate, group: group id }
+     * To add a new add-on, just append an entry here.
+     */
+    var _addonGroupMap = [
+        { key: 'broadcast', test: function (v) { return v && v !== 'none'; }, group: 'cb-bcast-time' },
+        { key: 'firmware',  test: function (v) { return !!v; },              group: 'cb-firmware' }
+    ];
+
+    /* Build the effective visibility list from node type + add-ons */
+    function _getVisibleGroups() {
+
+        var groups = (_baseGroups[_currentNodeType] || []).slice();
+
+        _addonGroupMap.forEach(function (entry) {
+
+            if (entry.test(_addons[entry.key])) {
+                groups.push(entry.group);
+            }
+
+        });
+
+        return groups;
+
+    }
+
+    /* Train callback section filtering by role */
+    var _trainSections      = ['Train Node \u2014 Notifications', 'Train Node \u2014 Decisions', 'Train Search'];
+    var _controllerSections = ['Throttle \u2014 Replies', 'Train Search'];
+
+    /* ===================================================================== */
+    /* Build a single checkbox item                                          */
+    /* ===================================================================== */
+
+    function _createFnItem(group, fn) {
+
+        var item = document.createElement('label');
+        item.className = 'fn-item';
+
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.dataset.fnName  = fn.name;
+        cb.dataset.groupKey = '';  /* set by caller */
+
+        if (fn.required) {
+            cb.checked  = true;
+            cb.disabled = true;
+        }
+
+        cb.addEventListener('change', function () {
+
+            _collectState();
+            _postStateToParent();
+
+        });
+
+        var content = document.createElement('div');
+        content.className = 'fn-item-content';
+
+        var nameEl = document.createElement('span');
+        nameEl.className   = 'fn-name';
+        nameEl.textContent = group.functionPrefix + '_' + fn.name + '()';
+
+        var descEl = document.createElement('span');
+        descEl.className   = 'fn-desc';
+        descEl.textContent = fn.description;
+
+        content.appendChild(nameEl);
+        content.appendChild(descEl);
+
+        if (fn.required) {
+
+            var tagEl = document.createElement('span');
+            tagEl.className   = 'fn-required';
+            tagEl.textContent = 'REQUIRED';
+            content.appendChild(tagEl);
+
+        }
+
+        /* Hover shows detail in the right panel; leaving falls back to group info */
+        (function (g, f) {
+
+            item.addEventListener('mouseenter', function () {
+
+                _showDetail(g, f);
+
+            });
+
+            item.addEventListener('mouseleave', function () {
+
+                _showGroupDetail(g);
+
+            });
+
+        })(group, fn);
+
+        item.appendChild(cb);
+        item.appendChild(content);
+
+        return item;
+
+    }
+
+    /* ===================================================================== */
+    /* Filter train callbacks by node role                                   */
+    /* ===================================================================== */
+
+    function _filterFunctionsForRole(groupKey, functions) {
+
+        if (groupKey !== 'cb-train' || !_currentNodeType) { return functions; }
+
+        var allowed;
+        if (_currentNodeType === 'train') {
+            allowed = _trainSections;
+        } else if (_currentNodeType === 'train-controller') {
+            allowed = _controllerSections;
+        } else {
+            return functions;
+        }
+
+        return functions.filter(function (fn) {
+
+            if (!fn.section) { return true; }
+            return allowed.indexOf(fn.section) >= 0;
+
+        });
+
+    }
+
+    /* ===================================================================== */
+    /* Render all visible groups                                             */
+    /* ===================================================================== */
+
+    function _renderAllGroups() {
+
+        var container = document.getElementById('callback-sections');
+        container.innerHTML = '';
+
+        var visibleGroupKeys = _getVisibleGroups();
+
+        visibleGroupKeys.forEach(function (groupKey) {
+
+            var group = CALLBACK_GROUPS[groupKey];
+            if (!group) { return; }
+
+            var visibleFunctions = _filterFunctionsForRole(groupKey, group.functions);
+            if (visibleFunctions.length === 0) { return; }
+
+            /* Group <details> wrapper */
+            var details = document.createElement('details');
+            details.className = 'group-section';
+            details.dataset.groupKey = groupKey;
+            details.open = true;
+
+            /* Tile-level hover: show group info when inside the tile but not on a specific item */
+            (function (g) {
+
+                details.addEventListener('mouseenter', function () {
+
+                    _showGroupDetail(g);
+
+                });
+
+                details.addEventListener('mouseleave', function () {
+
+                    _clearDetail();
+
+                });
+
+            })(group);
+
+            var summary = document.createElement('summary');
+            summary.className = 'group-header';
+
+            var titleText = document.createTextNode(group.title);
+            summary.appendChild(titleText);
+
+            var descSpan = document.createElement('span');
+            descSpan.className = 'group-header-desc';
+            descSpan.textContent = '\u2014 ' + group.description;
+            summary.appendChild(descSpan);
+
+            details.appendChild(summary);
+
+            var body = document.createElement('div');
+            body.className = 'group-body';
+
+            /* Check for section-based layout (Train callbacks) */
+            var hasSections = visibleFunctions.some(function (fn) { return !!fn.section; });
+            var hasAdvanced = visibleFunctions.some(function (fn) { return !!fn.advanced; });
+
+            if (hasSections) {
+
+                var lastSection = null;
+                var currentList = null;
+
+                visibleFunctions.forEach(function (fn) {
+
+                    if (fn.section !== lastSection) {
+
+                        var sec = document.createElement('details');
+                        sec.className = 'sub-section';
+                        sec.open = true;
+
+                        var secSummary = document.createElement('summary');
+                        secSummary.className   = 'sub-section-toggle';
+                        secSummary.textContent = fn.section;
+                        sec.appendChild(secSummary);
+
+                        currentList = document.createElement('div');
+                        currentList.className = 'sub-section-list';
+                        sec.appendChild(currentList);
+
+                        body.appendChild(sec);
+                        lastSection = fn.section;
+
+                    }
+
+                    var item = _createFnItem(group, fn);
+                    item.querySelector('input').dataset.groupKey = groupKey;
+                    currentList.appendChild(item);
+
+                });
+
+            } else {
+
+                /* Flat layout with optional Advanced collapsible */
+                visibleFunctions.forEach(function (fn) {
+
+                    if (fn.advanced) { return; }
+                    var item = _createFnItem(group, fn);
+                    item.querySelector('input').dataset.groupKey = groupKey;
+                    body.appendChild(item);
+
+                });
+
+                if (hasAdvanced) {
+
+                    var advDetails = document.createElement('details');
+                    advDetails.className = 'advanced-section';
+
+                    var advSummary = document.createElement('summary');
+                    advSummary.className   = 'advanced-toggle';
+                    advSummary.textContent = 'Advanced';
+                    advDetails.appendChild(advSummary);
+
+                    var advContainer = document.createElement('div');
+                    advContainer.className = 'advanced-list';
+
+                    visibleFunctions.forEach(function (fn) {
+
+                        if (!fn.advanced) { return; }
+                        var item = _createFnItem(group, fn);
+                        item.querySelector('input').dataset.groupKey = groupKey;
+                        advContainer.appendChild(item);
+
+                    });
+
+                    advDetails.appendChild(advContainer);
+                    body.appendChild(advDetails);
+
+                }
+
+            }
+
+            details.appendChild(body);
+            container.appendChild(details);
+
+        });
+
+        /* Restore checked state */
+        _applyState();
+
+        /* Equalize all section widths to the widest */
+        _equalizeSectionWidths();
+
+    }
+
+    function _equalizeSectionWidths() {
+
+        var sections = document.querySelectorAll('.group-section');
+        var inner    = document.getElementById('callbacks-inner');
+        if (sections.length === 0) { return; }
+
+        /* Reset to natural width first */
+        sections.forEach(function (s) { s.style.width = ''; });
+        if (inner) { inner.style.width = ''; }
+
+        /* Measure widest */
+        var maxW = 0;
+        sections.forEach(function (s) {
+
+            var w = s.offsetWidth;
+            if (w > maxW) { maxW = w; }
+
+        });
+
+        /* Apply uniform width to sections and container */
+        sections.forEach(function (s) { s.style.width = maxW + 'px'; });
+        if (inner) { inner.style.width = maxW + 'px'; }
+
+    }
+
+    /* ===================================================================== */
+    /* State management                                                      */
+    /* ===================================================================== */
+
+    function _collectState() {
+
+        _allGroupState = {};
+
+        document.querySelectorAll('#callback-sections input[type="checkbox"]').forEach(function (cb) {
+
+            var groupKey = cb.dataset.groupKey;
+            if (!groupKey) { return; }
+
+            if (!_allGroupState[groupKey]) {
+                _allGroupState[groupKey] = { checked: [] };
+            }
+
+            if (cb.checked) {
+                _allGroupState[groupKey].checked.push(cb.dataset.fnName);
+            }
+
+        });
+
+    }
+
+    function _applyState() {
+
+        document.querySelectorAll('#callback-sections input[type="checkbox"]').forEach(function (cb) {
+
+            if (cb.disabled) { return; }
+
+            var groupKey = cb.dataset.groupKey;
+            var gs = _allGroupState[groupKey];
+
+            if (gs && gs.checked) {
+                cb.checked = gs.checked.indexOf(cb.dataset.fnName) >= 0;
+            } else {
+                cb.checked = false;
+            }
+
+        });
+
+    }
+
+    function _postStateToParent() {
+
+        window.parent.postMessage({
+            type:  'allCallbackStateChanged',
+            state: _allGroupState
+        }, '*');
+
+    }
+
+    /* ===================================================================== */
+    /* Message listener                                                      */
+    /* ===================================================================== */
+
+    window.addEventListener('message', function (e) {
+
+        if (!e.data || !e.data.type) { return; }
+
+        switch (e.data.type) {
+
+            case 'setNodeType':
+
+                _currentNodeType = e.data.nodeType || null;
+                if (e.data.addons) { _addons = e.data.addons; }
+                _renderAllGroups();
+                break;
+
+            case 'setAddons':
+
+                if (e.data.addons) { _addons = e.data.addons; }
+                _renderAllGroups();
+                break;
+
+            case 'restoreState':
+
+                if (e.data.state) {
+                    _allGroupState = e.data.state;
+                }
+                if (e.data.nodeType) {
+                    _currentNodeType = e.data.nodeType;
+                }
+                if (e.data.addons) { _addons = e.data.addons; }
+                _renderAllGroups();
+                break;
+
+        }
+
+    });
+
+    /* ===================================================================== */
+    /* Init                                                                  */
+    /* ===================================================================== */
+
+    window.parent.postMessage({ type: 'ready' }, '*');
+
+    </script>
+
+</body>
+</html>
