@@ -33,3 +33,6 @@ fp-info-cache
 build/
 *.uf2
 *.elf
+
+# Editor/IDE caches
+.cache/

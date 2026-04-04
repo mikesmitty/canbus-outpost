@@ -1,0 +1,3 @@
+[submodule "firmware/canbus-outpost/src/openmrn"]
+	path = firmware/canbus-outpost/src/openmrn
+	url = https://github.com/bakerstu/openmrn

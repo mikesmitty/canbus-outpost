@@ -1,1 +1,0 @@
-A simple example of compiling in an Arduino IDE environment
