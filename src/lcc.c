@@ -727,6 +727,15 @@ void lcc_task(void *param)
         return;
     }
 
+    /* Broadcast current state of all enabled servos so other nodes
+     * (and JMRI) know the switch positions at startup. */
+    for (int i = 0; i < LCC_NUM_SERVOS; i++) {
+        if (!node->config.servos[i].enabled)
+            continue;
+        send_producer_identified(node, i, false);  /* thrown feedback */
+        send_producer_identified(node, i, true);   /* closed feedback */
+    }
+
     lcc_frame_t frame;
     while (1) {
         if (xQueueReceive(node->can_rx_queue, &frame, pdMS_TO_TICKS(20))) {
