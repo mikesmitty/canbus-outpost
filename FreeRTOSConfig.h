@@ -32,7 +32,7 @@
 /* Hook functions */
 #define configUSE_IDLE_HOOK                     0
 #define configUSE_TICK_HOOK                     0
-#define configUSE_MALLOC_FAILED_HOOK            0
+#define configUSE_MALLOC_FAILED_HOOK            1
 #define configCHECK_FOR_STACK_OVERFLOW          2
 
 /* Runtime stats */
@@ -57,6 +57,7 @@
 #define configENABLE_FPU                        1
 #define configENABLE_MPU                        0
 #define configENABLE_TRUSTZONE                  0
+#define configRUN_FREERTOS_SECURE_ONLY          1
 
 /* Interrupt nesting — RP2350 Cortex-M33 has 4 priority bits */
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY     16

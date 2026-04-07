@@ -45,7 +45,10 @@ add_executable(canbus-outpost
     src/servo.c
     src/nv_storage.c
     src/lcc.c
+    src/lcc_memconfig.c
+    src/cdi_data.c
     src/gridconnect.c
+    src/util/dbg.c
 )
 
 pico_set_program_name(canbus-outpost "canbus-outpost")

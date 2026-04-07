@@ -11,6 +11,7 @@
 #include "lcc.h"
 #include "gridconnect.h"
 #include "util/dbg.h"
+#include "SEGGER_RTT.h"
 
 /* ------------------------------------------------------------------ */
 /* CAN bus (can2040 on PIO1)                                          */
@@ -43,6 +44,7 @@ static void PIO1_IRQHandler(void)
 
 static void can_init(void)
 {
+    DBG("can_init: can2040_setup\n");
     can2040_setup(&cbus, 1); /* PIO1 */
     can2040_callback_config(&cbus, can2040_cb);
 
@@ -51,10 +53,11 @@ static void can_init(void)
     irq_set_priority(pio1_irq, configMAX_SYSCALL_INTERRUPT_PRIORITY);
     irq_set_enabled(pio1_irq, true);
 
+    DBG("can_init: can2040_start\n");
     can2040_start(&cbus, configCPU_CLOCK_HZ, LCC_CAN_BITRATE,
                   CAN_RX_PIN, CAN_TX_PIN);
 
-    DBG("CAN: initialized on PIO1, %d bps\n", LCC_CAN_BITRATE);
+    DBG("can_init: initialized on PIO1, %d bps\n", LCC_CAN_BITRATE);
 }
 
 /* ------------------------------------------------------------------ */
@@ -65,6 +68,8 @@ static void can_tx_task(void *param)
 {
     lcc_node_t *node = (lcc_node_t *)param;
     lcc_frame_t frame;
+
+    can_init();
 
     while (1) {
         if (xQueueReceive(node->can_tx_queue, &frame, portMAX_DELAY)) {
@@ -92,7 +97,7 @@ static void gc_task(void *param)
     memset(&parser, 0, sizeof(parser));
 
     while (1) {
-        /* TX: drain gc_tx_queue → encode → USB */
+        /* TX: drain gc_tx_queue → encode → USB (stdio also sends to RTT) */
         lcc_frame_t frame;
         while (xQueueReceive(node->gc_tx_queue, &frame, 0) == pdTRUE) {
             char buf[GC_MAX_LEN];
@@ -103,7 +108,7 @@ static void gc_task(void *param)
             }
         }
 
-        /* RX: USB → parse GridConnect → inject to CAN + LCC */
+        /* RX: USB/RTT → parse GridConnect → inject to CAN + LCC */
         int c = getchar_timeout_us(0);
         while (c != PICO_ERROR_TIMEOUT) {
             lcc_frame_t rx_frame;
@@ -117,6 +122,7 @@ static void gc_task(void *param)
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Heartbeat task                                                     */
@@ -166,6 +172,17 @@ static uint64_t get_node_id(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Malloc failed hook                                                 */
+/* ------------------------------------------------------------------ */
+
+void vApplicationMallocFailedHook(void)
+{
+    DBG("FATAL: FreeRTOS malloc failed!\n");
+    __breakpoint();
+    while (1) {}
+}
+
+/* ------------------------------------------------------------------ */
 /* Main                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -176,18 +193,40 @@ int main(void)
     DBG("canbus-outpost starting (built " __DATE__ " " __TIME__ ")\n");
 
     servo_init();
+    DBG("Main: servo_init done (all outputs at 0%% duty)\n");
 
     uint64_t node_id = get_node_id();
-    DBG("Node ID: %012llX\n", node_id);
+    DBG("Main: Node ID: %012llX\n", node_id);
 
     lcc_init(&lcc_node, node_id);
-    can_init();
+    DBG("Main: lcc_init done\n");
 
-    xTaskCreate(lcc_task, "lcc", 2048, &lcc_node, 2, NULL);
-    xTaskCreate(can_tx_task, "can_tx", 512, &lcc_node, 3, NULL);
-    xTaskCreate(gc_task, "gc", 1024, &lcc_node, 1, NULL);
-    xTaskCreate(heartbeat_task, "heartbeat", 256, NULL, 0, NULL);
+    /* Drive each enabled servo to its default position before starting scheduler */
+    for (int i = 0; i < LCC_NUM_SERVOS; i++) {
+        lcc_servo_config_t *sc = &lcc_node.config.servos[i];
+        DBG("Main: servo %d throw=%016llX close=%016llX en=%d default=%d\n",
+            i, sc->throw_event, sc->close_event, sc->enabled, sc->default_state);
+        if (sc->enabled) {
+            bool closed = sc->default_state ? true : false;
+            uint16_t pos;
+            if (closed)
+                pos = sc->reversed ? sc->thrown_position : sc->closed_position;
+            else
+                pos = sc->reversed ? sc->closed_position : sc->thrown_position;
+            servo_set_position(i, pos);
+            DBG("Main: servo %d -> %s (pos=%u)\n", i, closed ? "closed" : "thrown", pos);
+        }
+        /* Disabled servos remain at 0% duty from servo_init() */
+    }
 
+    xTaskCreate(lcc_task, "lcc", 4096, &lcc_node, 2, NULL);
+    xTaskCreate(can_tx_task, "can_tx", 1024, &lcc_node, 3, NULL);
+    xTaskCreate(gc_task, "gc", 2048, &lcc_node, 1, NULL);
+    xTaskCreate(heartbeat_task, "heartbeat", 512, NULL, 0, NULL);
+
+    DBG("Main: Tasks created\n");
+
+    DBG("Main: vTaskStartScheduler starting\n");
     vTaskStartScheduler();
 
     return 0;

@@ -96,6 +96,24 @@
 #define LCC_PIP_SIMPLE_NODE_INFO    (1ULL << 36)
 #define LCC_PIP_CDI                 (1ULL << 35)
 
+/* Memory Configuration protocol command byte */
+#define LCC_MEMCONFIG_CMD           0x20
+
+/* Memory Config sub-commands (byte 1) */
+#define LCC_MEMCFG_WRITE            0x00  /* Write, space in low 2 bits */
+#define LCC_MEMCFG_READ             0x40  /* Read, space in low 2 bits */
+#define LCC_MEMCFG_READ_REPLY       0x50  /* Read reply, space in low 2 bits */
+#define LCC_MEMCFG_WRITE_REPLY      0x10  /* Write reply */
+#define LCC_MEMCFG_GET_SPACE_INFO   0x84  /* Get Address Space Info */
+#define LCC_MEMCFG_SPACE_INFO_REPLY 0x87  /* Address Space Info reply (present) */
+#define LCC_MEMCFG_SPACE_NOT_KNOWN  0x86  /* Address Space Info reply (not present) */
+#define LCC_MEMCFG_UPDATE_COMPLETE  0x08  /* Indicate Configuration Update Complete */
+#define LCC_MEMCFG_RESETS           0xA9  /* Reboot/Factory Reset */
+
+/* Read/Write sub-command: space encoding in low 2 bits */
+#define LCC_MEMCFG_SPACE_SPECIAL    0x03  /* space in low 2 bits means 0xFF */
+/* 0x03 = 0xFF (CDI), 0x02 = 0xFE, 0x01 = 0xFD (config), 0x00 = explicit byte */
+
 /* LCC CAN bitrate */
 #define LCC_CAN_BITRATE  125000
 
@@ -162,6 +180,23 @@ static inline bool lcc_is_cid_frame(uint32_t can_id)
 static inline uint16_t lcc_get_control_field(uint32_t can_id)
 {
     return (can_id & LCC_CONTROL_FIELD_MASK) >> LCC_CONTROL_FIELD_SHIFT;
+}
+
+/* Helper: build a datagram CAN ID */
+static inline uint32_t lcc_datagram_id(uint8_t frame_type, uint16_t dst_alias,
+                                       uint16_t src_alias)
+{
+    return (src_alias & 0xFFF)
+         | ((uint32_t)(dst_alias & 0xFFF) << 12)
+         | ((uint32_t)frame_type << LCC_CAN_FRAME_TYPE_SHIFT)
+         | ((uint32_t)LCC_FRAME_TYPE_OPENLCB << LCC_FRAME_TYPE_SHIFT)
+         | ((uint32_t)LCC_PRIORITY_NORMAL << LCC_PRIORITY_SHIFT);
+}
+
+/* Helper: extract destination alias from datagram CAN ID */
+static inline uint16_t lcc_get_datagram_dst(uint32_t can_id)
+{
+    return (can_id >> 12) & 0xFFF;
 }
 
 /* Helper: write 48-bit node ID into buffer (big-endian) */

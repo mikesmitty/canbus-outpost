@@ -1,5 +1,6 @@
 #include <string.h>
 #include "lcc.h"
+#include "lcc_memconfig.h"
 #include "servo.h"
 #include "nv_storage.h"
 #include "util/dbg.h"
@@ -215,6 +216,9 @@ static void handle_pip(lcc_node_t *node, const lcc_frame_t *f)
         return;
 
     uint64_t protocols = LCC_PIP_SIMPLE_PROTOCOL
+                       | LCC_PIP_DATAGRAM
+                       | LCC_PIP_MEMORY_CONFIG
+                       | LCC_PIP_CDI
                        | LCC_PIP_EVENT_EXCHANGE
                        | LCC_PIP_IDENTIFICATION
                        | LCC_PIP_SIMPLE_NODE_INFO;
@@ -259,17 +263,45 @@ static void handle_snip(lcc_node_t *node, const lcc_frame_t *f)
     }
 
     snip[pos++] = 2; /* user info version */
-    snip[pos++] = 0; /* user name (empty) */
-    snip[pos++] = 0; /* user description (empty) */
+    /* User name from config (null-terminated) */
+    {
+        const char *uname = (const char *)node->config.user_name;
+        int ulen = strlen(uname);
+        if (ulen > 63) ulen = 63;
+        if (ulen > 0) {
+            memcpy(&snip[pos], uname, ulen);
+            pos += ulen;
+        }
+        snip[pos++] = 0;
+    }
+    /* User description from config (null-terminated) */
+    {
+        const char *udesc = (const char *)node->config.user_desc;
+        int ulen = strlen(udesc);
+        if (ulen > 63) ulen = 63;
+        if (ulen > 0) {
+            memcpy(&snip[pos], udesc, ulen);
+            pos += ulen;
+        }
+        snip[pos++] = 0;
+    }
 
     uint16_t src = lcc_get_src(f->id);
     lcc_send_addressed(node, LCC_MTI_IDENT_INFO_REPLY, src, snip, pos);
 }
 
+static uint64_t servo_event(lcc_node_t *node, int event_idx)
+{
+    int servo = event_idx / 2;
+    bool is_close = (event_idx & 1);
+    return is_close ? node->config.servos[servo].close_event
+                    : node->config.servos[servo].throw_event;
+}
+
 static void send_consumer_identified(lcc_node_t *node, int event_idx)
 {
     uint8_t buf[8];
-    lcc_event_to_buf(node->events[event_idx], buf);
+    lcc_event_to_buf(servo_event(node, event_idx), buf);
 
     int servo = event_idx / 2;
     bool is_close = (event_idx & 1);
@@ -277,6 +309,28 @@ static void send_consumer_identified(lcc_node_t *node, int event_idx)
 
     uint16_t mti = active ? LCC_MTI_CONSUMER_IDENTIFIED_VALID
                           : LCC_MTI_CONSUMER_IDENTIFIED_INVALID;
+    lcc_send_global(node, mti, buf, 8);
+}
+
+static void send_producer_identified(lcc_node_t *node, int servo, bool is_closed_fb)
+{
+    lcc_servo_config_t *sc = &node->config.servos[servo];
+    uint64_t event_id = is_closed_fb ? sc->closed_feedback : sc->thrown_feedback;
+    if (event_id == 0)
+        return;
+
+    uint8_t buf[8];
+    lcc_event_to_buf(event_id, buf);
+
+    /* Active if the current state matches this feedback direction */
+    bool active;
+    if (is_closed_fb)
+        active = node->servo_state[servo] && !servo_is_moving(servo);
+    else
+        active = !node->servo_state[servo] && !servo_is_moving(servo);
+
+    uint16_t mti = active ? LCC_MTI_PRODUCER_IDENTIFIED_VALID
+                          : LCC_MTI_PRODUCER_IDENTIFIED_INVALID;
     lcc_send_global(node, mti, buf, 8);
 }
 
@@ -292,8 +346,35 @@ static void handle_identify_events(lcc_node_t *node, const lcc_frame_t *f)
             return;
     }
 
+    /* Consumer events (throw/close commands) */
     for (int i = 0; i < LCC_NUM_EVENTS; i++)
         send_consumer_identified(node, i);
+
+    /* Producer events (thrown/closed feedback) */
+    for (int i = 0; i < LCC_NUM_SERVOS; i++) {
+        send_producer_identified(node, i, false); /* thrown feedback */
+        send_producer_identified(node, i, true);  /* closed feedback */
+    }
+}
+
+static void handle_producer_identify(lcc_node_t *node, const lcc_frame_t *f)
+{
+    if (f->dlc < 8)
+        return;
+
+    uint64_t event_id = lcc_event_from_buf(f->data);
+
+    for (int i = 0; i < LCC_NUM_SERVOS; i++) {
+        lcc_servo_config_t *sc = &node->config.servos[i];
+        if (event_id == sc->thrown_feedback) {
+            send_producer_identified(node, i, false);
+            return;
+        }
+        if (event_id == sc->closed_feedback) {
+            send_producer_identified(node, i, true);
+            return;
+        }
+    }
 }
 
 static void handle_consumer_identify(lcc_node_t *node, const lcc_frame_t *f)
@@ -304,7 +385,7 @@ static void handle_consumer_identify(lcc_node_t *node, const lcc_frame_t *f)
     uint64_t event_id = lcc_event_from_buf(f->data);
 
     for (int i = 0; i < LCC_NUM_EVENTS; i++) {
-        if (node->events[i] == event_id) {
+        if (servo_event(node, i) == event_id) {
             send_consumer_identified(node, i);
             return;
         }
@@ -319,17 +400,23 @@ static void handle_event_report(lcc_node_t *node, const lcc_frame_t *f)
     uint64_t event_id = lcc_event_from_buf(f->data);
 
     for (int i = 0; i < LCC_NUM_SERVOS; i++) {
-        if (event_id == node->events[i * 2]) {
-            /* Throw event */
-            servo_set_position(i, node->servo_thrown[i]);
+        lcc_servo_config_t *sc = &node->config.servos[i];
+        if (!sc->enabled)
+            continue;
+
+        if (event_id == sc->throw_event) {
+            uint16_t pos = sc->reversed ? sc->closed_position : sc->thrown_position;
+            servo_set_target(i, pos, sc->throw_time, sc->hold_time);
             node->servo_state[i] = false;
-            DBG("LCC: servo %d thrown\n", i);
+            DBG("LCC: servo %d throw -> %u (time %u.%us)\n",
+                i, pos, sc->throw_time / 10, sc->throw_time % 10);
             return;
-        } else if (event_id == node->events[i * 2 + 1]) {
-            /* Close event */
-            servo_set_position(i, node->servo_closed[i]);
+        } else if (event_id == sc->close_event) {
+            uint16_t pos = sc->reversed ? sc->thrown_position : sc->closed_position;
+            servo_set_target(i, pos, sc->throw_time, sc->hold_time);
             node->servo_state[i] = true;
-            DBG("LCC: servo %d closed\n", i);
+            DBG("LCC: servo %d close -> %u (time %u.%us)\n",
+                i, pos, sc->throw_time / 10, sc->throw_time % 10);
             return;
         }
     }
@@ -351,22 +438,114 @@ static void handle_ame(lcc_node_t *node, const lcc_frame_t *f)
     lcc_send_control(node, LCC_CONTROL_AMD, nid_buf, 6);
 }
 
+static void lcc_send_datagram_ok(lcc_node_t *node, uint16_t dst_alias)
+{
+    uint8_t data[2];
+    data[0] = (dst_alias >> 8) & 0x0F;
+    data[1] = dst_alias & 0xFF;
+
+    lcc_frame_t f;
+    f.id = lcc_can_id(LCC_MTI_DATAGRAM_OK, node->alias);
+    f.dlc = 2;
+    memcpy(f.data, data, 2);
+    lcc_send(node, &f);
+}
+
+static void lcc_send_datagram_rejected(lcc_node_t *node, uint16_t dst_alias,
+                                       uint16_t error_code)
+{
+    uint8_t data[4];
+    data[0] = (dst_alias >> 8) & 0x0F;
+    data[1] = dst_alias & 0xFF;
+    data[2] = (error_code >> 8) & 0xFF;
+    data[3] = error_code & 0xFF;
+
+    lcc_frame_t f;
+    f.id = lcc_can_id(LCC_MTI_DATAGRAM_REJECTED, node->alias);
+    f.dlc = 4;
+    memcpy(f.data, data, 4);
+    lcc_send(node, &f);
+}
+
+static void handle_complete_datagram(lcc_node_t *node, uint16_t src_alias,
+                                     const uint8_t *buf, uint8_t len)
+{
+    /* ACK the datagram first */
+    lcc_send_datagram_ok(node, src_alias);
+
+    if (len < 1)
+        return;
+
+    if (buf[0] == LCC_MEMCONFIG_CMD) {
+        lcc_memconfig_handle(node, src_alias, buf, len);
+    } else {
+        /* Unknown datagram protocol */
+        DBG("LCC: unknown datagram protocol 0x%02X\n", buf[0]);
+    }
+}
+
 static void handle_datagram(lcc_node_t *node, const lcc_frame_t *f)
 {
-    /* We don't support any datagram protocols yet — reject */
+    uint8_t frame_type = lcc_get_can_frame_type(f->id);
+    uint16_t dst = lcc_get_datagram_dst(f->id);
     uint16_t src = lcc_get_src(f->id);
 
-    uint8_t reject[4];
-    reject[0] = ((src >> 8) & 0x0F);
-    reject[1] = src & 0xFF;
-    reject[2] = 0x10;  /* permanent error */
-    reject[3] = 0x43;  /* not implemented */
+    /* Ignore datagrams not addressed to us */
+    if (dst != node->alias)
+        return;
 
-    lcc_frame_t resp;
-    resp.id = lcc_can_id(LCC_MTI_DATAGRAM_REJECTED, node->alias);
-    resp.dlc = 4;
-    memcpy(resp.data, reject, 4);
-    lcc_send(node, &resp);
+    lcc_datagram_rx_t *dg = &node->dg_rx;
+
+    switch (frame_type) {
+    case LCC_FRAME_DATAGRAM_ONE:
+        /* Complete single-frame datagram */
+        handle_complete_datagram(node, src, f->data, f->dlc);
+        dg->active = false;
+        break;
+
+    case LCC_FRAME_DATAGRAM_FIRST:
+        /* Start of multi-frame datagram */
+        dg->src_alias = src;
+        dg->len = 0;
+        dg->active = true;
+        if (f->dlc <= LCC_DATAGRAM_MAX) {
+            memcpy(dg->buf, f->data, f->dlc);
+            dg->len = f->dlc;
+        }
+        break;
+
+    case LCC_FRAME_DATAGRAM_MIDDLE:
+        if (!dg->active || dg->src_alias != src)
+            break;
+        if (dg->len + f->dlc > LCC_DATAGRAM_MAX) {
+            /* Overflow — reject */
+            lcc_send_datagram_rejected(node, src, 0x1000);
+            dg->active = false;
+            break;
+        }
+        memcpy(dg->buf + dg->len, f->data, f->dlc);
+        dg->len += f->dlc;
+        break;
+
+    case LCC_FRAME_DATAGRAM_FINAL:
+        if (!dg->active || dg->src_alias != src) {
+            /* Got FINAL without FIRST — treat as single-frame */
+            if (!dg->active) {
+                handle_complete_datagram(node, src, f->data, f->dlc);
+            }
+            break;
+        }
+        if (dg->len + f->dlc > LCC_DATAGRAM_MAX) {
+            lcc_send_datagram_rejected(node, src, 0x1000);
+            dg->active = false;
+            break;
+        }
+        memcpy(dg->buf + dg->len, f->data, f->dlc);
+        dg->len += f->dlc;
+        dg->active = false;
+        handle_complete_datagram(node, src, dg->buf, dg->len);
+        break;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -415,6 +594,9 @@ static void lcc_handle_frame(lcc_node_t *node, const lcc_frame_t *f)
         case LCC_MTI_CONSUMER_IDENTIFY:
             handle_consumer_identify(node, f);
             break;
+        case LCC_MTI_PRODUCER_IDENTIFY:
+            handle_producer_identify(node, f);
+            break;
         case LCC_MTI_EVENT_REPORT:
             handle_event_report(node, f);
             break;
@@ -425,6 +607,7 @@ static void lcc_handle_frame(lcc_node_t *node, const lcc_frame_t *f)
     }
     case LCC_FRAME_DATAGRAM_ONE:
     case LCC_FRAME_DATAGRAM_FIRST:
+    case LCC_FRAME_DATAGRAM_MIDDLE:
     case LCC_FRAME_DATAGRAM_FINAL:
         handle_datagram(node, f);
         break;
@@ -437,6 +620,28 @@ static void lcc_handle_frame(lcc_node_t *node, const lcc_frame_t *f)
 /* Public API                                                         */
 /* ------------------------------------------------------------------ */
 
+void lcc_config_defaults(lcc_config_t *config, uint64_t node_id)
+{
+    memset(config, 0, sizeof(*config));
+    config->magic = LCC_CONFIG_MAGIC;
+
+    for (int i = 0; i < LCC_NUM_SERVOS; i++) {
+        lcc_servo_config_t *sc = &config->servos[i];
+        sc->throw_event    = (node_id << 16) | (i * 4);
+        sc->close_event    = (node_id << 16) | (i * 4 + 1);
+        sc->thrown_feedback = (node_id << 16) | (i * 4 + 2);
+        sc->closed_feedback = (node_id << 16) | (i * 4 + 3);
+        sc->thrown_position = 16384;
+        sc->closed_position = 49152;
+        sc->throw_time = 30;  /* 3.0 seconds */
+        sc->hold_time = 2;    /* 2 seconds, then cut PWM */
+        sc->enabled = 1;
+        sc->default_state = 0; /* thrown */
+        sc->reversed = 0;
+        /* _reserved and _node_pad already zeroed by memset above */
+    }
+}
+
 void lcc_init(lcc_node_t *node, uint64_t node_id)
 {
     memset(node, 0, sizeof(*node));
@@ -444,45 +649,68 @@ void lcc_init(lcc_node_t *node, uint64_t node_id)
     node->state = LCC_STATE_ALIAS_CID;
 
     /* Try to load config from flash */
-    lcc_config_t config;
-    bool loaded = nv_storage_init(&config, sizeof(config));
+    bool loaded = nv_storage_init(&node->config, sizeof(node->config));
 
-    if (loaded && config.magic == LCC_CONFIG_MAGIC) {
+    if (loaded && node->config.magic == LCC_CONFIG_MAGIC) {
         DBG("LCC: loaded config from flash\n");
-        memcpy(node->events, config.events, sizeof(node->events));
-        memcpy(node->servo_thrown, config.servo_thrown, sizeof(node->servo_thrown));
-        memcpy(node->servo_closed, config.servo_closed, sizeof(node->servo_closed));
     } else {
         DBG("LCC: using default config\n");
-        /* Default event IDs: node_id base with servo index */
-        for (int i = 0; i < LCC_NUM_SERVOS; i++) {
-            node->events[i * 2]     = (node_id << 16) | (i * 2);
-            node->events[i * 2 + 1] = (node_id << 16) | (i * 2 + 1);
-        }
-        /* Default servo endpoints */
-        for (int i = 0; i < LCC_NUM_SERVOS; i++) {
-            node->servo_thrown[i] = 16384;
-            node->servo_closed[i] = 49152;
-        }
+        lcc_config_defaults(&node->config, node_id);
     }
 
+    /* Set initial servo state from default_state config */
     for (int i = 0; i < LCC_NUM_SERVOS; i++)
-        node->servo_state[i] = false;
+        node->servo_state[i] = node->config.servos[i].default_state ? true : false;
 
     node->can_rx_queue = xQueueCreate(CAN_QUEUE_LEN, sizeof(lcc_frame_t));
     node->can_tx_queue = xQueueCreate(CAN_QUEUE_LEN, sizeof(lcc_frame_t));
     node->gc_tx_queue  = xQueueCreate(GC_QUEUE_LEN, sizeof(lcc_frame_t));
 }
 
+void lcc_send_datagram(lcc_node_t *node, uint16_t dst_alias,
+                       const uint8_t *payload, uint8_t len)
+{
+    if (len <= 8) {
+        /* Single-frame datagram */
+        lcc_frame_t f;
+        f.id = lcc_datagram_id(LCC_FRAME_DATAGRAM_ONE, dst_alias, node->alias);
+        f.dlc = len;
+        memcpy(f.data, payload, len);
+        lcc_send(node, &f);
+        return;
+    }
+
+    /* Multi-frame datagram */
+    uint8_t offset = 0;
+
+    /* First frame */
+    lcc_frame_t f;
+    f.id = lcc_datagram_id(LCC_FRAME_DATAGRAM_FIRST, dst_alias, node->alias);
+    f.dlc = 8;
+    memcpy(f.data, payload, 8);
+    lcc_send(node, &f);
+    offset = 8;
+
+    while (offset < len) {
+        uint8_t remaining = len - offset;
+        bool last = (remaining <= 8);
+        uint8_t chunk = last ? remaining : 8;
+
+        f.id = lcc_datagram_id(last ? LCC_FRAME_DATAGRAM_FINAL
+                                    : LCC_FRAME_DATAGRAM_MIDDLE,
+                               dst_alias, node->alias);
+        f.dlc = chunk;
+        memcpy(f.data, payload + offset, chunk);
+        lcc_send(node, &f);
+        offset += chunk;
+    }
+}
+
 void lcc_save_config(lcc_node_t *node)
 {
-    lcc_config_t config;
-    config.magic = LCC_CONFIG_MAGIC;
-    memcpy(config.events, node->events, sizeof(config.events));
-    memcpy(config.servo_thrown, node->servo_thrown, sizeof(config.servo_thrown));
-    memcpy(config.servo_closed, node->servo_closed, sizeof(config.servo_closed));
+    node->config.magic = LCC_CONFIG_MAGIC;
 
-    if (nv_storage_write(&config, sizeof(config))) {
+    if (nv_storage_write(&node->config, sizeof(node->config))) {
         DBG("LCC: config saved to flash\n");
     } else {
         DBG("LCC: config save failed\n");
@@ -501,8 +729,24 @@ void lcc_task(void *param)
 
     lcc_frame_t frame;
     while (1) {
-        if (xQueueReceive(node->can_rx_queue, &frame, pdMS_TO_TICKS(100))) {
+        if (xQueueReceive(node->can_rx_queue, &frame, pdMS_TO_TICKS(20))) {
             lcc_handle_frame(node, &frame);
+        }
+
+        /* Servo interpolation tick (~50Hz, runs every queue timeout) */
+        uint8_t completed = servo_tick();
+        for (int i = 0; i < LCC_NUM_SERVOS; i++) {
+            if (!(completed & (1 << i)))
+                continue;
+            lcc_servo_config_t *sc = &node->config.servos[i];
+            uint64_t fb = node->servo_state[i] ? sc->closed_feedback
+                                                : sc->thrown_feedback;
+            if (fb) {
+                uint8_t buf[8];
+                lcc_event_to_buf(fb, buf);
+                lcc_send_global(node, LCC_MTI_EVENT_REPORT, buf, 8);
+            }
+            DBG("LCC: servo %d complete, feedback sent\n", i);
         }
     }
 }

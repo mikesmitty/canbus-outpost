@@ -2,6 +2,7 @@
 #include "hardware/flash.h"
 #include "hardware/sync.h"
 #include "pico/flash.h"
+#include "util/dbg.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -13,6 +14,7 @@
 #define FLASH_TARGET_CONTENTS ((const uint8_t *)(XIP_BASE + FLASH_CONFIG_OFFSET))
 
 bool nv_storage_init(void *buffer, size_t size) {
+    DBG("nv_storage_init: size %d, offset 0x%x\n", size, FLASH_CONFIG_OFFSET);
     if (size > FLASH_SECTOR_SIZE) return false;
 
     // Check if flash is erased (all 0xFF)
@@ -25,10 +27,12 @@ bool nv_storage_init(void *buffer, size_t size) {
     }
 
     if (!erased) {
+        DBG("nv_storage_init: loading data\n");
         memcpy(buffer, FLASH_TARGET_CONTENTS, size);
         return true;
     }
 
+    DBG("nv_storage_init: flash empty\n");
     return false;
 }
 
