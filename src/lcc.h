@@ -68,7 +68,7 @@ enum {
 #define LCC_SNIP_HW_VERSION    "Rev A"
 #ifndef LCC_SW_VERSION
 // x-release-please-start-version
-#define LCC_SNIP_SW_VERSION    "0.1.0"
+#define LCC_SNIP_SW_VERSION    "0.2.0"
 // x-release-please-end
 #else
 #define LCC_SNIP_SW_VERSION    LCC_SW_VERSION
