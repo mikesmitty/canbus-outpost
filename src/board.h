@@ -34,11 +34,11 @@
 #define RC_CH4_A 23
 #define RC_CH4_B 24
 
-// Onboard LED (Pico 2/RP2350 usually has a default LED)
+// Board identify LED
 #ifndef PICO_DEFAULT_LED_PIN
-#define HEARTBEAT_LED 25
+#define IDENTIFY_LED_PIN 25
 #else
-#define HEARTBEAT_LED PICO_DEFAULT_LED_PIN
+#define IDENTIFY_LED_PIN PICO_DEFAULT_LED_PIN
 #endif
 
 #endif // BOARD_H

@@ -9,6 +9,7 @@
 #include "can2040.h"
 #include "servo.h"
 #include "lcc.h"
+#include "identify_led.h"
 #include "gridconnect.h"
 #include "util/dbg.h"
 #include "SEGGER_RTT.h"
@@ -125,24 +126,6 @@ static void gc_task(void *param)
 
 
 /* ------------------------------------------------------------------ */
-/* Heartbeat task                                                     */
-/* ------------------------------------------------------------------ */
-
-static void heartbeat_task(void *param)
-{
-    (void)param;
-    gpio_init(HEARTBEAT_LED);
-    gpio_set_dir(HEARTBEAT_LED, GPIO_OUT);
-
-    while (1) {
-        gpio_put(HEARTBEAT_LED, 1);
-        vTaskDelay(pdMS_TO_TICKS(100));
-        gpio_put(HEARTBEAT_LED, 0);
-        vTaskDelay(pdMS_TO_TICKS(9900));
-    }
-}
-
-/* ------------------------------------------------------------------ */
 /* Stack overflow hook                                                */
 /* ------------------------------------------------------------------ */
 
@@ -200,6 +183,8 @@ int main(void)
 
     lcc_init(&lcc_node, node_id);
     DBG("Main: lcc_init done\n");
+    identify_led_init(&lcc_node.config.identify);
+    DBG("Main: identify_led_init done\n");
 
     /* Drive each enabled servo to its default position before starting scheduler */
     for (int i = 0; i < LCC_NUM_SERVOS; i++) {
@@ -222,7 +207,6 @@ int main(void)
     xTaskCreate(lcc_task, "lcc", 4096, &lcc_node, 2, NULL);
     xTaskCreate(can_tx_task, "can_tx", 1024, &lcc_node, 3, NULL);
     xTaskCreate(gc_task, "gc", 2048, &lcc_node, 1, NULL);
-    xTaskCreate(heartbeat_task, "heartbeat", 512, NULL, 0, NULL);
 
     DBG("Main: Tasks created\n");
 

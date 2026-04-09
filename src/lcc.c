@@ -1,6 +1,7 @@
 #include <string.h>
 #include "lcc.h"
 #include "lcc_memconfig.h"
+#include "identify_led.h"
 #include "servo.h"
 #include "nv_storage.h"
 #include "util/dbg.h"
@@ -205,6 +206,7 @@ static void handle_verify_node_id(lcc_node_t *node, const lcc_frame_t *f)
     uint8_t nid_buf[6];
     lcc_node_id_to_buf(node->node_id, nid_buf);
     lcc_send_global(node, LCC_MTI_VERIFIED_NODE_ID, nid_buf, 6);
+    identify_led_trigger(&node->config.identify);
 }
 
 static void handle_pip(lcc_node_t *node, const lcc_frame_t *f)
@@ -288,6 +290,7 @@ static void handle_snip(lcc_node_t *node, const lcc_frame_t *f)
 
     uint16_t src = lcc_get_src(f->id);
     lcc_send_addressed(node, LCC_MTI_IDENT_INFO_REPLY, src, snip, pos);
+    identify_led_trigger(&node->config.identify);
 }
 
 static uint64_t servo_event(lcc_node_t *node, int event_idx)
@@ -624,6 +627,8 @@ void lcc_config_defaults(lcc_config_t *config, uint64_t node_id)
 {
     memset(config, 0, sizeof(*config));
     config->magic = LCC_CONFIG_MAGIC;
+    config->identify.enabled = 0;
+    config->identify.timeout_minutes = LCC_IDENTIFY_TIMEOUT_5_MIN;
 
     for (int i = 0; i < LCC_NUM_SERVOS; i++) {
         lcc_servo_config_t *sc = &config->servos[i];
@@ -740,6 +745,11 @@ void lcc_task(void *param)
     while (1) {
         if (xQueueReceive(node->can_rx_queue, &frame, pdMS_TO_TICKS(20))) {
             lcc_handle_frame(node, &frame);
+        }
+
+        if (identify_led_poll()) {
+            node->config.identify.enabled = 0;
+            lcc_save_config(node);
         }
 
         /* Servo interpolation tick (~50Hz, runs every queue timeout) */

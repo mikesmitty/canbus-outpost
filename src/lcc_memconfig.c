@@ -1,6 +1,7 @@
 #include <string.h>
 #include "lcc_memconfig.h"
 #include "cdi_data.h"
+#include "identify_led.h"
 #include "servo.h"
 #include "util/dbg.h"
 
@@ -191,6 +192,8 @@ static void handle_write(lcc_node_t *node, uint16_t src_alias,
     memcpy(config_bytes + addr, write_data, count);
 
     DBG("LCC memconfig: wrote %d bytes at offset %lu\n", count, (unsigned long)addr);
+
+    identify_led_update_config(&node->config.identify);
 
     /* Check if a servo was just disabled — cut its PWM */
     for (int i = 0; i < LCC_NUM_SERVOS; i++) {

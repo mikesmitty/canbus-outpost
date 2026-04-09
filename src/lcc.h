@@ -12,7 +12,13 @@
 #define LCC_NUM_EVENTS  (LCC_NUM_SERVOS * 2)
 
 /* Config magic for flash validation — bump when layout changes */
-#define LCC_CONFIG_MAGIC  0x4C434302  /* "LCC\x02" */
+#define LCC_CONFIG_MAGIC  0x4C434303  /* "LCC\x03" */
+
+#define LCC_IDENTIFY_TIMEOUT_INDEFINITE  0
+#define LCC_IDENTIFY_TIMEOUT_1_MIN       1
+#define LCC_IDENTIFY_TIMEOUT_5_MIN       5
+#define LCC_IDENTIFY_TIMEOUT_10_MIN      10
+#define LCC_IDENTIFY_TIMEOUT_15_MIN      15
 
 /* Per-servo configuration (48 bytes, naturally aligned to 8 bytes).
  * Layout must match CDI XML field sizes exactly (group stride = 48). */
@@ -31,12 +37,18 @@ typedef struct {
     uint8_t  _reserved[7];      /* pad to 48 bytes (multiple of 8) */
 } lcc_servo_config_t;
 
+typedef struct {
+    uint8_t enabled;            /* 0=disabled, 1=enabled */
+    uint8_t timeout_minutes;    /* 0=indefinite, otherwise minutes */
+    uint8_t _reserved[2];       /* pad to 4 bytes */
+} lcc_identify_config_t;
+
 /* Persistent config stored in flash (328 bytes, naturally aligned). */
 typedef struct {
     uint32_t magic;
     uint8_t  user_name[64];
     uint8_t  user_desc[64];
-    uint32_t _node_pad;         /* explicit padding to align servos to 8 bytes */
+    lcc_identify_config_t identify;
     lcc_servo_config_t servos[LCC_NUM_SERVOS];
 } lcc_config_t;
 
@@ -51,10 +63,16 @@ enum {
 };
 
 /* SNIP strings */
-#define LCC_SNIP_MFG_NAME      "Canbus Outpost"
-#define LCC_SNIP_MODEL_NAME    "Servo Switch Controller"
+#define LCC_SNIP_MFG_NAME      "mikesmitty"
+#define LCC_SNIP_MODEL_NAME    "CAN Bus Outpost"
 #define LCC_SNIP_HW_VERSION    "Rev A"
-#define LCC_SNIP_SW_VERSION    "1.0"
+#ifndef LCC_SW_VERSION
+// x-release-please-start-version
+#define LCC_SNIP_SW_VERSION    "0.1.0"
+// x-release-please-end
+#else
+#define LCC_SNIP_SW_VERSION    LCC_SW_VERSION
+#endif
 
 /* Datagram reassembly buffer */
 #define LCC_DATAGRAM_MAX  72

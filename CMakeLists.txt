@@ -44,6 +44,7 @@ add_executable(canbus-outpost
     src/railcom.c
     src/servo.c
     src/nv_storage.c
+    src/identify_led.c
     src/lcc.c
     src/lcc_memconfig.c
     src/cdi_data.c
@@ -51,8 +52,30 @@ add_executable(canbus-outpost
     src/util/dbg.c
 )
 
+# x-release-please-start-version
+set(PROJECT_VERSION_BASE "0.1.0")
+# x-release-please-end
+
+# Get the current git version if available
+execute_process(
+    COMMAND git describe --tags --always --dirty
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    OUTPUT_VARIABLE GIT_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+# If git describe only returned a hash (no tags), prepend the base version
+if (GIT_VERSION MATCHES "^[0-9a-f]+(-dirty)?$")
+    set(GIT_VERSION "${PROJECT_VERSION_BASE}-${GIT_VERSION}")
+endif()
+
+if (NOT GIT_VERSION)
+    set(GIT_VERSION "${PROJECT_VERSION_BASE}-unknown")
+endif()
+
 pico_set_program_name(canbus-outpost "canbus-outpost")
-pico_set_program_version(canbus-outpost "0.1")
+pico_set_program_version(canbus-outpost "${GIT_VERSION}")
 
 # Generate PIO headers
 pico_generate_pio_header(canbus-outpost ${CMAKE_CURRENT_LIST_DIR}/blink.pio)
@@ -66,6 +89,7 @@ pico_enable_stdio_rtt(canbus-outpost 1)
 # Wait up to 2s during stdio_usb_init() for USB enumeration
 target_compile_definitions(canbus-outpost PRIVATE
     PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=2000
+    LCC_SW_VERSION="${GIT_VERSION}"
 )
 
 # Add the standard library to the build
