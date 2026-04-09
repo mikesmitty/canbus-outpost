@@ -1,0 +1,62 @@
+on:
+  push:
+    branches:
+      - main
+
+name: Release Please
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release-please
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+    outputs:
+      release-created: ${{ steps.release-please.outputs.release_created }}
+      tag-name: ${{ steps.release-please.outputs.tag_name }}
+      version: ${{ steps.release-please.outputs.version }}
+
+  build-firmware:
+    if: ${{ needs.release-please.outputs.release-created == 'true' }}
+    needs: release-please
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Download Pico SDK
+        run: |
+          git clone --depth 1 --branch master https://github.com/raspberrypi/pico-sdk.git "$HOME/pico-sdk"
+          echo "PICO_SDK_PATH=$HOME/pico-sdk" >> $GITHUB_ENV
+          cd "$HOME/pico-sdk"
+          git submodule update --init
+
+      - name: Download FreeRTOS Kernel
+        run: |
+          git clone --depth 1 --branch main https://github.com/FreeRTOS/FreeRTOS-Kernel.git "$HOME/FreeRTOS-Kernel"
+          echo "FREERTOS_KERNEL_PATH=$HOME/FreeRTOS-Kernel" >> $GITHUB_ENV
+
+      - name: Build firmware
+        run: |
+          cmake -B build
+          cmake --build build -j$(nproc)
+
+      - name: Upload UF2 to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag-name }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          cp build/canbus-outpost.uf2 "canbus-outpost-${VERSION}.uf2"
+          gh release upload "$TAG_NAME" "canbus-outpost-${VERSION}.uf2"

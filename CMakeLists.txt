@@ -29,8 +29,7 @@ set(PICO_BOARD pico2 CACHE STRING "Board type")
 include(pico_sdk_import.cmake)
 
 # Pull in FreeRTOS
-set(FREERTOS_KERNEL_PATH ${USERHOME}/git/FreeRTOS-Kernel CACHE PATH "Path to FreeRTOS Kernel")
-include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
+include(FreeRTOS_Kernel_import.cmake)
 
 project(canbus-outpost C CXX ASM)
 
