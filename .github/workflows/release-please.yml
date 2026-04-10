@@ -45,6 +45,8 @@ jobs:
       - name: Download FreeRTOS Kernel
         run: |
           git clone --depth 1 --branch main https://github.com/FreeRTOS/FreeRTOS-Kernel.git "$HOME/FreeRTOS-Kernel"
+          cd "$HOME/FreeRTOS-Kernel"
+          git submodule update --init portable/ThirdParty/Community-Supported-Ports
           echo "FREERTOS_KERNEL_PATH=$HOME/FreeRTOS-Kernel" >> $GITHUB_ENV
 
       - name: Build firmware
