@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.2.1...v0.3.0) (2026-04-10)
+
+
+### Features
+
+* **servo:** add "No Change" default state option and default to closed ([8e3acc5](https://github.com/mikesmitty/canbus-outpost/commit/8e3acc5dbc9800a2b613a01acdd93002f33e7c38))
+
 ## [0.2.1](https://github.com/mikesmitty/canbus-outpost/compare/v0.2.0...v0.2.1) (2026-04-10)
 
 

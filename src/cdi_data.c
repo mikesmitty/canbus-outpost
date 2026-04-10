@@ -10,7 +10,7 @@ const char cdi_xml[] =
     "<model>CAN Bus Outpost</model>"
     "<hardwareVersion>Rev A</hardwareVersion>"
     "<!-- x-release-please-start-version -->"
-    "<softwareVersion>0.2.1</softwareVersion>"
+    "<softwareVersion>0.3.0</softwareVersion>"
     "<!-- x-release-please-end -->"
     "</identification>"
 
