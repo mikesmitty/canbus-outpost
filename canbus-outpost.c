@@ -191,8 +191,8 @@ int main(void)
         lcc_servo_config_t *sc = &lcc_node.config.servos[i];
         DBG("Main: servo %d throw=%016llX close=%016llX en=%d default=%d\n",
             i, sc->throw_event, sc->close_event, sc->enabled, sc->default_state);
-        if (sc->enabled) {
-            bool closed = sc->default_state ? true : false;
+        if (sc->enabled && sc->default_state != LCC_SERVO_DEFAULT_NO_CHANGE) {
+            bool closed = (sc->default_state == LCC_SERVO_DEFAULT_CLOSED);
             uint16_t pos;
             if (closed)
                 pos = sc->reversed ? sc->thrown_position : sc->closed_position;

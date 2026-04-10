@@ -308,10 +308,15 @@ static void send_consumer_identified(lcc_node_t *node, int event_idx)
 
     int servo = event_idx / 2;
     bool is_close = (event_idx & 1);
-    bool active = (is_close == node->servo_state[servo]);
 
-    uint16_t mti = active ? LCC_MTI_CONSUMER_IDENTIFIED_VALID
-                          : LCC_MTI_CONSUMER_IDENTIFIED_INVALID;
+    uint16_t mti;
+    if (!node->servo_state_known[servo]) {
+        mti = LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN;
+    } else {
+        bool active = (is_close == node->servo_state[servo]);
+        mti = active ? LCC_MTI_CONSUMER_IDENTIFIED_VALID
+                     : LCC_MTI_CONSUMER_IDENTIFIED_INVALID;
+    }
     lcc_send_global(node, mti, buf, 8);
 }
 
@@ -326,14 +331,18 @@ static void send_producer_identified(lcc_node_t *node, int servo, bool is_closed
     lcc_event_to_buf(event_id, buf);
 
     /* Active if the current state matches this feedback direction */
-    bool active;
-    if (is_closed_fb)
-        active = node->servo_state[servo] && !servo_is_moving(servo);
-    else
-        active = !node->servo_state[servo] && !servo_is_moving(servo);
-
-    uint16_t mti = active ? LCC_MTI_PRODUCER_IDENTIFIED_VALID
-                          : LCC_MTI_PRODUCER_IDENTIFIED_INVALID;
+    uint16_t mti;
+    if (!node->servo_state_known[servo]) {
+        mti = LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN;
+    } else {
+        bool active;
+        if (is_closed_fb)
+            active = node->servo_state[servo] && !servo_is_moving(servo);
+        else
+            active = !node->servo_state[servo] && !servo_is_moving(servo);
+        mti = active ? LCC_MTI_PRODUCER_IDENTIFIED_VALID
+                     : LCC_MTI_PRODUCER_IDENTIFIED_INVALID;
+    }
     lcc_send_global(node, mti, buf, 8);
 }
 
@@ -411,6 +420,7 @@ static void handle_event_report(lcc_node_t *node, const lcc_frame_t *f)
             uint16_t pos = sc->reversed ? sc->closed_position : sc->thrown_position;
             servo_set_target(i, pos, sc->throw_time, sc->hold_time);
             node->servo_state[i] = false;
+            node->servo_state_known[i] = true;
             DBG("LCC: servo %d throw -> %u (time %u.%us)\n",
                 i, pos, sc->throw_time / 10, sc->throw_time % 10);
             return;
@@ -418,6 +428,7 @@ static void handle_event_report(lcc_node_t *node, const lcc_frame_t *f)
             uint16_t pos = sc->reversed ? sc->thrown_position : sc->closed_position;
             servo_set_target(i, pos, sc->throw_time, sc->hold_time);
             node->servo_state[i] = true;
+            node->servo_state_known[i] = true;
             DBG("LCC: servo %d close -> %u (time %u.%us)\n",
                 i, pos, sc->throw_time / 10, sc->throw_time % 10);
             return;
@@ -641,7 +652,7 @@ void lcc_config_defaults(lcc_config_t *config, uint64_t node_id)
         sc->throw_time = 30;  /* 3.0 seconds */
         sc->hold_time = 2;    /* 2 seconds, then cut PWM */
         sc->enabled = 1;
-        sc->default_state = 0; /* thrown */
+        sc->default_state = LCC_SERVO_DEFAULT_CLOSED; /* 1 */
         sc->reversed = 0;
         /* _reserved and _node_pad already zeroed by memset above */
     }
@@ -664,8 +675,15 @@ void lcc_init(lcc_node_t *node, uint64_t node_id)
     }
 
     /* Set initial servo state from default_state config */
-    for (int i = 0; i < LCC_NUM_SERVOS; i++)
-        node->servo_state[i] = node->config.servos[i].default_state ? true : false;
+    for (int i = 0; i < LCC_NUM_SERVOS; i++) {
+        if (node->config.servos[i].default_state == LCC_SERVO_DEFAULT_NO_CHANGE) {
+            node->servo_state[i] = false;
+            node->servo_state_known[i] = false;
+        } else {
+            node->servo_state[i] = (node->config.servos[i].default_state == LCC_SERVO_DEFAULT_CLOSED);
+            node->servo_state_known[i] = true;
+        }
+    }
 
     node->can_rx_queue = xQueueCreate(CAN_QUEUE_LEN, sizeof(lcc_frame_t));
     node->can_tx_queue = xQueueCreate(CAN_QUEUE_LEN, sizeof(lcc_frame_t));

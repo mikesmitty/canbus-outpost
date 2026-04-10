@@ -12,7 +12,12 @@
 #define LCC_NUM_EVENTS  (LCC_NUM_SERVOS * 2)
 
 /* Config magic for flash validation — bump when layout changes */
-#define LCC_CONFIG_MAGIC  0x4C434303  /* "LCC\x03" */
+#define LCC_CONFIG_MAGIC  0x4C434304  /* "LCC\x04" */
+
+/* Default state values */
+#define LCC_SERVO_DEFAULT_THROWN     0
+#define LCC_SERVO_DEFAULT_CLOSED     1
+#define LCC_SERVO_DEFAULT_NO_CHANGE  2
 
 #define LCC_IDENTIFY_TIMEOUT_INDEFINITE  0
 #define LCC_IDENTIFY_TIMEOUT_1_MIN       1
@@ -94,6 +99,7 @@ typedef struct {
 
     /* Runtime servo state: true = closed */
     bool servo_state[LCC_NUM_SERVOS];
+    bool servo_state_known[LCC_NUM_SERVOS];
 
     /* Datagram reassembly */
     lcc_datagram_rx_t dg_rx;
