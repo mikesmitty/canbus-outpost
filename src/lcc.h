@@ -119,6 +119,9 @@ void lcc_save_config(lcc_node_t *node);
 void lcc_send_datagram(lcc_node_t *node, uint16_t dst_alias,
                        const uint8_t *payload, uint8_t len);
 
+/* Send a Datagram OK (ACK). */
+void lcc_send_datagram_ok(lcc_node_t *node, uint16_t dst_alias);
+
 /* LCC protocol task — runs alias allocation then main loop.
  * Pass lcc_node_t* as the task parameter. */
 void lcc_task(void *param);

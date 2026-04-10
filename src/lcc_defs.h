@@ -107,8 +107,9 @@
 #define LCC_MEMCFG_GET_SPACE_INFO   0x84  /* Get Address Space Info */
 #define LCC_MEMCFG_SPACE_INFO_REPLY 0x87  /* Address Space Info reply (present) */
 #define LCC_MEMCFG_SPACE_NOT_KNOWN  0x86  /* Address Space Info reply (not present) */
-#define LCC_MEMCFG_UPDATE_COMPLETE  0x08  /* Indicate Configuration Update Complete */
-#define LCC_MEMCFG_RESETS           0xA9  /* Reboot/Factory Reset */
+#define LCC_MEMCFG_UPDATE_COMPLETE  0xA8  /* Indicate Configuration Update Complete */
+#define LCC_MEMCFG_REBOOT          0xA9  /* Reboot node */
+#define LCC_MEMCFG_FACTORY_RESET   0xAA  /* Factory Reset (payload = 6-byte node ID) */
 
 /* Read/Write sub-command: space encoding in low 2 bits */
 #define LCC_MEMCFG_SPACE_SPECIAL    0x03  /* space in low 2 bits means 0xFF */

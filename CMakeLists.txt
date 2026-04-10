@@ -88,6 +88,7 @@ pico_enable_stdio_rtt(canbus-outpost 1)
 # Wait up to 2s during stdio_usb_init() for USB enumeration
 target_compile_definitions(canbus-outpost PRIVATE
     PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=2000
+    PICO_FLASH_SAFE_EXECUTE_PICO_SUPPORT_MULTICORE_LOCKOUT=0
     LCC_SW_VERSION="${GIT_VERSION}"
 )
 
@@ -98,6 +99,7 @@ target_link_libraries(canbus-outpost
         hardware_pwm
         hardware_dma
         hardware_flash
+        pico_flash
         pico_unique_id
         pico_multicore
         FreeRTOS-Kernel

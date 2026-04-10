@@ -1,4 +1,5 @@
 #include <string.h>
+#include "hardware/watchdog.h"
 #include "lcc_memconfig.h"
 #include "cdi_data.h"
 #include "identify_led.h"
@@ -212,6 +213,40 @@ static void handle_update_complete(lcc_node_t *node)
     lcc_save_config(node);
 }
 
+static void handle_reboot(lcc_node_t *node, uint16_t src_alias)
+{
+    DBG("LCC memconfig: rebooting...\n");
+    lcc_send_datagram_ok(node, src_alias);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    watchdog_reboot(0, 0, 0);
+}
+
+static void handle_factory_reset(lcc_node_t *node, uint16_t src_alias,
+                                 const uint8_t *buf, uint8_t len)
+{
+    /* Standard requires 6-byte node ID as confirmation */
+    if (len < 8)
+        return;
+
+    uint64_t confirm_nid = 0;
+    for (int i = 0; i < 6; i++)
+        confirm_nid = (confirm_nid << 8) | buf[2 + i];
+
+    if (confirm_nid != node->node_id) {
+        DBG("LCC memconfig: factory reset node ID mismatch\n");
+        return;
+    }
+
+    DBG("LCC memconfig: factory reset confirmed\n");
+    lcc_send_datagram_ok(node, src_alias);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    lcc_config_defaults(&node->config, node->node_id);
+    lcc_save_config(node);
+    DBG("LCC memconfig: factory reset complete, rebooting...\n");
+    watchdog_reboot(0, 0, 0);
+}
+
 /* ------------------------------------------------------------------ */
 /* Main dispatcher                                                     */
 /* ------------------------------------------------------------------ */
@@ -231,6 +266,16 @@ void lcc_memconfig_handle(lcc_node_t *node, uint16_t src_alias,
 
     if (cmd == LCC_MEMCFG_UPDATE_COMPLETE) {
         handle_update_complete(node);
+        return;
+    }
+
+    if (cmd == LCC_MEMCFG_REBOOT) {
+        handle_reboot(node, src_alias);
+        return;
+    }
+
+    if (cmd == LCC_MEMCFG_FACTORY_RESET) {
+        handle_factory_reset(node, src_alias, buf, len);
         return;
     }
 

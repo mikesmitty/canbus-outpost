@@ -441,7 +441,7 @@ static void handle_ame(lcc_node_t *node, const lcc_frame_t *f)
     lcc_send_control(node, LCC_CONTROL_AMD, nid_buf, 6);
 }
 
-static void lcc_send_datagram_ok(lcc_node_t *node, uint16_t dst_alias)
+void lcc_send_datagram_ok(lcc_node_t *node, uint16_t dst_alias)
 {
     uint8_t data[2];
     data[0] = (dst_alias >> 8) & 0x0F;
