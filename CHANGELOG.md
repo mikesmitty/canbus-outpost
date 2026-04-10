@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.1](https://github.com/mikesmitty/canbus-outpost/compare/v0.2.0...v0.2.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* **lcc:** correct Update Complete command and fix flash writes ([c6c54f6](https://github.com/mikesmitty/canbus-outpost/commit/c6c54f63b11c725be7dc7756b86b1fd509bc4b51))
+
+
+### Miscellaneous
+
+* **ci:** init FreeRTOS submodule for RP2350 port ([33793cd](https://github.com/mikesmitty/canbus-outpost/commit/33793cd8935302fa61fbcb8044102c5f023625af))
+
 ## [0.2.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.1.0...v0.2.0) (2026-04-09)
 
 
