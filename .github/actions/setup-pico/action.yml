@@ -27,12 +27,13 @@ runs:
         # 14_2_Rel1 -> 14.2.rel1, as in the Arm download URL
         echo "toolchain-url=$(echo "$toolchain" | tr _ . | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
+    # Bump the trailing number when what gets downloaded changes
     - name: Cache toolchain and SDKs
       id: cache
       uses: actions/cache@v4
       with:
         path: ~/pico
-        key: pico-${{ runner.os }}-${{ steps.versions.outputs.toolchain }}-sdk${{ steps.versions.outputs.sdk }}-freertos-${{ inputs.freertos-ref }}
+        key: pico-${{ runner.os }}-${{ steps.versions.outputs.toolchain }}-sdk${{ steps.versions.outputs.sdk }}-freertos-${{ inputs.freertos-ref }}-2
 
     - name: Download toolchain and SDKs
       if: steps.cache.outputs.cache-hit != 'true'
@@ -47,7 +48,9 @@ runs:
           | tar -xJ -C ~/pico/toolchain --strip-components=1
 
         git clone --quiet --depth 1 --branch "$SDK" https://github.com/raspberrypi/pico-sdk.git ~/pico/pico-sdk
-        git -C ~/pico/pico-sdk submodule update --quiet --init --depth 1 lib/tinyusb
+        # tinyusb for USB stdio; mbedtls for the picotool the SDK builds,
+        # which needs it to hash the image (pico_hash_binary)
+        git -C ~/pico/pico-sdk submodule update --quiet --init --depth 1 lib/tinyusb lib/mbedtls
 
         git init --quiet ~/pico/FreeRTOS-Kernel
         git -C ~/pico/FreeRTOS-Kernel fetch --quiet --depth 1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git "$FREERTOS_REF"
