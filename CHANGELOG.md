@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.3.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.2.1...v0.3.0) (2026-10-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **firmware:** the saved configuration format changed, so the first boot after updating starts from default settings.
+
+### Features
+
+* **firmware:** add LCC firmware upgrades with A/B partitions ([9fec902](https://github.com/mikesmitty/canbus-outpost/commit/9fec9022431a3bee0aae7b50b8d1eb24fd73e36b))
+* **firmware:** rebuild the node on the LCC library ([a078627](https://github.com/mikesmitty/canbus-outpost/commit/a07862737fa5658a8c71d90c98996fc7dcd3b71b))
+* **lcc:** add producer ranges and firmware upgrade ([cda6121](https://github.com/mikesmitty/canbus-outpost/commit/cda61210fe623f593dac092881dea92fac5042c4))
+* **lcc:** add standalone OpenLCB library with host tests ([26daaf3](https://github.com/mikesmitty/canbus-outpost/commit/26daaf3669002c157862c4afe887a015c380931b))
+* **lcc:** detect another node using this node's ID ([1e978a3](https://github.com/mikesmitty/canbus-outpost/commit/1e978a3b318d47d8d8b8e995b0f135cfd56620ac))
+* **railcom:** report occupancy and locomotives over LCC ([0a94255](https://github.com/mikesmitty/canbus-outpost/commit/0a942559b7ec857642f05ff64a3b7018cadcdc2d))
+* **servo:** add "No Change" default state option and default to closed ([8e3acc5](https://github.com/mikesmitty/canbus-outpost/commit/8e3acc5dbc9800a2b613a01acdd93002f33e7c38))
+
+
+### Bug Fixes
+
+* **ci:** check out mbedtls so picotool can hash the image ([2a094cc](https://github.com/mikesmitty/canbus-outpost/commit/2a094cced31faaf4977591a4ee146ec45f3638c5))
+* **hardware:** fix railcom circuits ([3e4cef5](https://github.com/mikesmitty/canbus-outpost/commit/3e4cef5458fc2f0919f649ae8a24d963a0a8edc6))
+* **lcc:** replace POSIX strnlen with portable C11 ([f7ed556](https://github.com/mikesmitty/canbus-outpost/commit/f7ed5568ebdb4551a1f5b33b9d319777cd2cd735))
+* **node-id:** keep the stand-in node ID out of other vendors' ranges ([2892eb2](https://github.com/mikesmitty/canbus-outpost/commit/2892eb2bdd8351dfeab05e87e1c6822c902f0d36))
+
+
+### Miscellaneous
+
+* Configure Renovate ([#4](https://github.com/mikesmitty/canbus-outpost/issues/4)) ([2b3e3b1](https://github.com/mikesmitty/canbus-outpost/commit/2b3e3b194d279b043447a2112363e853f1ff80a5))
+* **hardware:** add misc kicad files ([57013a8](https://github.com/mikesmitty/canbus-outpost/commit/57013a8b93326d6f1756d89e75506f9a02b5cea0))
+
+
+### Documentation
+
+* **claude:** describe firmware upgrades and RailCom events ([522997d](https://github.com/mikesmitty/canbus-outpost/commit/522997d699fdfa8522cafb55440c9f8ca4fc26c9))
+
 ## [0.2.1](https://github.com/mikesmitty/canbus-outpost/compare/v0.2.0...v0.2.1) (2026-04-10)
 
 
