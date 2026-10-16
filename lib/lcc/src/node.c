@@ -190,7 +190,9 @@ static void send_protocol_support(uint16_t dst)
 
 static int append_string(uint8_t *buf, int pos, const char *s, size_t max)
 {
-    size_t n = s ? strnlen(s, max) : 0;
+    // strnlen is POSIX, not C11
+    const char *end = s ? memchr(s, 0, max) : NULL;
+    size_t n = !s ? 0 : end ? (size_t)(end - s) : max;
     if (n)
         memcpy(buf + pos, s, n);
     buf[pos + n] = 0;

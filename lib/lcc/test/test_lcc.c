@@ -301,7 +301,9 @@ static void test_snip(void)
     const uint8_t want_head[] = "\x04mfg\0model\0hw\0sw\0\x02Yard throat";
     CHECK(memcmp(p, want_head, sizeof(want_head)) == 0, "SNIP strings wrong");
     int desc_at = (int)sizeof(want_head);
-    int desc_len = (int)strnlen((const char *)p + desc_at, 200);
+    const char *desc = (const char *)p + desc_at;
+    const char *nul = memchr(desc, 0, 200);
+    int desc_len = nul ? (int)(nul - desc) : -1;
     CHECK(desc_len == 63 && n == desc_at + 64, "description length %d, total %d", desc_len, n);
 }
 
