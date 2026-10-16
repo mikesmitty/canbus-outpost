@@ -47,9 +47,12 @@ static uint32_t record_crc(const record_header_t *h, const uint8_t *data)
     return crc32_update(crc, data, h->length);
 }
 
+// Read at the physical flash address: booted from a partition, the usual
+// XIP window maps only that partition, and these records are outside it.
 static const record_header_t *sector_header(const nv_region_t *r, int slot)
 {
-    return (const record_header_t *)(XIP_BASE + r->flash_offset + slot * FLASH_SECTOR_SIZE);
+    return (const record_header_t *)(XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE + r->flash_offset +
+                                     slot * FLASH_SECTOR_SIZE);
 }
 
 static bool slot_valid(const nv_region_t *r, int slot)

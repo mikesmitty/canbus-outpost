@@ -3,7 +3,7 @@ CC     ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O1 -g
 SRC    := ../src
 
-TESTS := test_cdi_layout test_railcom test_railcom_app
+TESTS := test_cdi_layout test_railcom test_fw_image test_railcom_app
 LCC    := ../lib/lcc
 
 .PHONY: run clean
@@ -17,6 +17,9 @@ test_cdi_layout: test_cdi_layout.c $(SRC)/app/cdi_data.c $(SRC)/app/config_layou
 # in for the SDK and FreeRTOS headers.
 test_railcom: test_railcom.c $(SRC)/railcom.c $(SRC)/railcom.h $(wildcard mock/*.h mock/*/*.h)
 	$(CC) $(CFLAGS) -Wno-unused-parameter -Imock -I$(SRC) -o $@ test_railcom.c -lm
+
+test_fw_image: test_fw_image.c $(SRC)/fw_image.c $(SRC)/fw_image.h
+	$(CC) $(CFLAGS) -I$(SRC) -o $@ test_fw_image.c $(SRC)/fw_image.c
 
 # railcom_app.c on the real LCC library; LCC task calls run immediately
 test_railcom_app: test_railcom_app.c $(SRC)/app/railcom_app.c $(SRC)/app/railcom_app.h \

@@ -9,6 +9,7 @@
 #include "app/config.h"
 #include "app/version.h"
 #include "can_bus.h"
+#include "firmware_update.h"
 #include "lcc/memconfig.h"
 #include "lcc/node.h"
 #include "usb_gridconnect.h"
@@ -54,12 +55,13 @@ static bool send_frame(const lcc_frame_t *frame)
 static void initialized(void)
 {
     DBG("LCC: initialized, alias 0x%03X\n", lcc_alias());
+    firmware_update_node_up();
 }
 
 static void reboot(void)
 {
     DBG("LCC: rebooting\n");
-    watchdog_reboot(0, 0, 0);
+    firmware_update_reboot();
 }
 
 static void update_complete(void)
@@ -102,6 +104,8 @@ void lcc_task_init(uint64_t node_id)
     config_space.writable = (uint8_t *)&config;
     config_space.written = app_config_written;
     lcc_memconfig_add_space(&config_space);
+
+    firmware_update_init();
 }
 
 // ------------------------------------------------------------------
@@ -121,6 +125,11 @@ static void heartbeat_in_task(uint32_t arg)
     }
 }
 
+void lcc_task_start_watchdog(void)
+{
+    watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
+}
+
 static void heartbeat_cb(TimerHandle_t t)
 {
     (void)t;
@@ -132,7 +141,7 @@ void lcc_task(void *param)
     (void)param;
 
     // Fed through the queue, so a stuck task or timer service resets the node
-    watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
+    lcc_task_start_watchdog();
     heartbeat = xTimerCreate("heartbeat", pdMS_TO_TICKS(HEARTBEAT_MS), pdTRUE, NULL,
                              heartbeat_cb);
     xTimerStart(heartbeat, 0);

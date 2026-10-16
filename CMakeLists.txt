@@ -44,6 +44,8 @@ add_executable(canbus-outpost
     canbus-outpost.c
     src/can2040.c
     src/can_bus.c
+    src/firmware_update.c
+    src/fw_image.c
     src/lcc_task.c
     src/node_id.c
     src/nv_storage.c
@@ -96,6 +98,10 @@ pico_enable_stdio_rtt(canbus-outpost 1)
 # Wait up to 2s during stdio_usb_init() for USB enumeration
 target_compile_definitions(canbus-outpost PRIVATE
     PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=2000
+    # Try before you buy: a newly installed image runs on trial and becomes
+    # the boot image only once it confirms itself (src/firmware_update.c);
+    # otherwise the next boot goes back to the previous one
+    PICO_CRT0_IMAGE_TYPE_TBYB=1
     PICO_FLASH_SAFE_EXECUTE_PICO_SUPPORT_MULTICORE_LOCKOUT=0
     LCC_SW_VERSION="${GIT_VERSION}"
 )
@@ -107,6 +113,9 @@ target_link_libraries(canbus-outpost
         hardware_pwm
         hardware_dma
         hardware_flash
+        boot_picoboot_headers
+        boot_uf2_headers
+        pico_bootrom
         pico_flash
         pico_unique_id
         hardware_watchdog
@@ -120,5 +129,8 @@ target_include_directories(canbus-outpost PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/src
 )
+
+# SHA-256 of the image in its metadata: the bootrom won't run a corrupted copy
+pico_hash_binary(canbus-outpost)
 
 pico_add_extra_outputs(canbus-outpost)
