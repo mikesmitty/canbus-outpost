@@ -11,7 +11,7 @@
 #define FIRMWARE_SW_VERSION    LCC_SW_VERSION  // git describe, from CMake
 #else
 // x-release-please-start-version
-#define FIRMWARE_SW_VERSION    "0.2.1"
+#define FIRMWARE_SW_VERSION    "0.3.0"
 // x-release-please-end
 #endif
 
