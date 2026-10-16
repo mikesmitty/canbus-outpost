@@ -13,13 +13,14 @@ That makes it straightforward to run under FreeRTOS, bare metal or a host test.
 | Message network | Initialization Complete, Verify Node ID (global and addressed), Optional Interaction Rejected for unsupported addressed messages |
 | Protocol Support | Reply built from what is registered |
 | SNIP | Manufacturer and user sections |
-| Event transport | Producer/consumer registry, identify replies with valid/invalid/unknown state, event reports, announcement after initialization |
+| Event transport | Producer/consumer registry, identify replies with valid/invalid/unknown state, event reports, announcement after initialization, producer ranges (Producer Range Identified, application-answered identify for IDs in the range) |
 | Datagrams | Reassembly with timeout, busy and out-of-order rejection, OK with reply-pending, outgoing queue with resend on temporary rejection |
 | Memory configuration | Read and write on registered spaces, space information, configuration options, lock, Update Complete, reboot, factory reset |
+| Firmware upgrade | Freeze/Unfreeze, space 0xEF written by datagram (the application stores and checks the image), Protocol Support bits |
 | GridConnect | Encoder and parser |
 
-It does not cover streams, traction, firmware upgrade or nodes with more
-than one virtual node.
+It does not cover streams, traction or nodes with more than one virtual
+node.
 
 ## Using it
 

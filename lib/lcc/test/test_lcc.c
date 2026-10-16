@@ -399,6 +399,65 @@ static void test_events(void)
     CHECK(nsent == 0, "sent an all-zero event");
 }
 
+static uint64_t range_queried;
+static void range_identify(uintptr_t arg, uint64_t id)
+{
+    range_queried = id;
+    lcc_producer_send_identified(id, arg ? LCC_EVENT_VALID : LCC_EVENT_INVALID);
+}
+
+static void test_producer_ranges(void)
+{
+    setup();
+    /* Bit 16 set: the range ID ends in zeros; clear: in ones */
+    static uint8_t odd[8], even[8], zero[8];
+    lcc_put_be64(odd, 0x0501010112350000ULL);
+    lcc_put_be64(even, 0x050101011236ABCDULL);  /* data bits are ignored */
+    static const lcc_producer_range_t r_odd = { .base = odd, .bits = 16,
+                                                .identify = range_identify, .arg = 1 };
+    static const lcc_producer_range_t r_even = { .base = even, .bits = 16 };
+    static const lcc_producer_range_t r_zero = { .base = zero, .bits = 16 };
+    static const lcc_producer_range_t r_bad = { .base = odd, .bits = 0 };
+    lcc_producer_range_register(&r_odd);
+    lcc_producer_range_register(&r_even);
+    lcc_producer_range_register(&r_zero);
+    CHECK(!lcc_producer_range_register(&r_bad), "accepted a zero-size range");
+    start_node();
+
+    rx_global(LCC_MTI_EVENTS_IDENTIFY_GLOBAL, OTHER, NULL, 0);
+    CHECK(nsent == 2 && mti_of(&sent[0]) == LCC_MTI_PRODUCER_RANGE_IDENTIFIED &&
+          lcc_get_be64(sent[0].data) == 0x0501010112350000ULL &&
+          lcc_get_be64(sent[1].data) == 0x050101011236FFFFULL,
+          "range identified: n=%d %016llx %016llx", nsent,
+          (unsigned long long)lcc_get_be64(sent[0].data),
+          (unsigned long long)lcc_get_be64(sent[1].data));
+
+    uint8_t q[8];
+    nsent = 0;
+    range_queried = 0;
+    lcc_put_be64(q, 0x050101011235F803ULL);
+    rx_global(LCC_MTI_PRODUCER_IDENTIFY, OTHER, q, 8);
+    CHECK(range_queried == 0x050101011235F803ULL && nsent == 2 &&
+          mti_of(&sent[0]) == LCC_MTI_PRODUCER_IDENTIFIED_VALID &&
+          memcmp(sent[0].data, q, 8) == 0 &&
+          mti_of(&sent[1]) == LCC_MTI_PRODUCER_RANGE_IDENTIFIED,
+          "identify in range: n=%d", nsent);
+
+    nsent = 0;
+    lcc_put_be64(q, 0x0501010112360042ULL);
+    rx_global(LCC_MTI_PRODUCER_IDENTIFY, OTHER, q, 8);
+    CHECK(nsent == 2 && mti_of(&sent[0]) == LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN &&
+          memcmp(sent[0].data, q, 8) == 0, "range without identify: n=%d", nsent);
+
+    nsent = 0;
+    lcc_put_be64(q, 0x0501010112370000ULL);
+    rx_global(LCC_MTI_PRODUCER_IDENTIFY, OTHER, q, 8);
+    lcc_put_be64(q, 0x0000000000000042ULL);
+    rx_global(LCC_MTI_PRODUCER_IDENTIFY, OTHER, q, 8);
+    rx_global(LCC_MTI_CONSUMER_IDENTIFY, OTHER, odd, 8);
+    CHECK(nsent == 0, "answered outside the ranges: n=%d", nsent);
+}
+
 /* ------------------------------------------------------------------ */
 /* Datagrams and memory configuration                                 */
 /* ------------------------------------------------------------------ */
@@ -556,6 +615,143 @@ static void test_memconfig_commands(void)
     CHECK(reboot_calls == 2, "no reboot after factory reset");
 }
 
+static uint8_t fw_image[1024];
+static uint32_t fw_written;
+static int fw_freezes, fw_unfreezes;
+static uint16_t fw_freeze_error, fw_write_error, fw_unfreeze_error;
+
+static uint16_t fw_freeze(void) { fw_freezes++; return fw_freeze_error; }
+static uint16_t fw_write(uint32_t a, const uint8_t *d, uint32_t n)
+{
+    if (fw_write_error)
+        return fw_write_error;
+    memcpy(fw_image + a, d, n);
+    fw_written = a + n;
+    return 0;
+}
+static uint16_t fw_unfreeze(void) { fw_unfreezes++; return fw_unfreeze_error; }
+
+static const lcc_firmware_upgrade_t firmware = {
+    .max_size = sizeof(fw_image), .freeze = fw_freeze, .write = fw_write, .unfreeze = fw_unfreeze,
+};
+
+static uint64_t pip_bits(void)
+{
+    nsent = 0;
+    rx_addressed(LCC_MTI_PROTOCOL_SUPPORT_INQUIRY, OTHER, lcc_alias(), NULL, 0);
+    uint8_t p[8];
+    return addressed_payload(LCC_MTI_PROTOCOL_SUPPORT_REPLY, p) == 6 ? lcc_get_be48(p) : 0;
+}
+
+/* Write len bytes of firmware at addr: [0x20, 0x00, addr, 0xEF, data] */
+static int fw_write_request(uint32_t addr, uint8_t len, uint8_t fill)
+{
+    uint8_t d[7 + 64] = { 0x20, 0x00 };
+    lcc_put_be32(d + 2, addr);
+    d[6] = LCC_SPACE_FIRMWARE;
+    memset(d + 7, fill, len);
+    uint8_t r[8];
+    return request(d, (uint8_t)(7 + len), false, r);
+}
+
+static void test_firmware_upgrade(void)
+{
+    setup();
+    memset(fw_image, 0, sizeof(fw_image));
+    fw_written = 0;
+    fw_freezes = fw_unfreezes = 0;
+    fw_freeze_error = fw_write_error = fw_unfreeze_error = 0;
+    lcc_memconfig_enable_firmware_upgrade(&firmware);
+    start_node();
+    uint8_t r[80];
+
+    uint64_t bits = pip_bits();
+    CHECK((bits & LCC_PROTOCOL_FIRMWARE_UPGRADE) && !(bits & LCC_PROTOCOL_FIRMWARE_UPGRADE_ACTIVE) &&
+          (bits & LCC_PROTOCOL_DATAGRAM) && (bits & LCC_PROTOCOL_MEMORY_CONFIG) &&
+          !(bits & LCC_PROTOCOL_STREAM), "PIP before freeze %012llX", (unsigned long long)bits);
+
+    /* The space doesn't exist until frozen */
+    CHECK(fw_write_request(0, 64, 0x11) == -0x1081 && fw_written == 0, "write accepted before freeze");
+    const uint8_t info[] = { 0x20, 0x84, 0xEF };
+    CHECK(request(info, sizeof(info), true, r) == 3 && r[1] == 0x86, "space present before freeze");
+
+    const uint8_t freeze_other[] = { 0x20, 0xA1, 0xFD };
+    CHECK(request(freeze_other, sizeof(freeze_other), false, r) == -0x1081 && fw_freezes == 0,
+          "froze another space");
+    fw_freeze_error = LCC_ERROR_TEMPORARY;
+    const uint8_t freeze[] = { 0x20, 0xA1, 0xEF };
+    CHECK(request(freeze, sizeof(freeze), false, r) == -LCC_ERROR_TEMPORARY &&
+          !lcc_firmware_upgrade_active(), "refused freeze not reported");
+    fw_freeze_error = 0;
+
+    /* Freeze: OK, then Initialization Complete */
+    CHECK(request(freeze, sizeof(freeze), false, r) == 0 && lcc_firmware_upgrade_active(),
+          "freeze failed");
+    int ok_at = -1, init_at = find_mti(LCC_MTI_INITIALIZATION_COMPLETE, 0);
+    for (int i = 0; i < nsent; i++)
+        if (!lcc_is_control_frame(sent[i].id) && mti_of(&sent[i]) == LCC_MTI_DATAGRAM_OK) ok_at = i;
+    CHECK(ok_at >= 0 && init_at > ok_at && lcc_get_be48(sent[init_at].data) == NODE_ID,
+          "freeze: OK at %d, Initialization Complete at %d", ok_at, init_at);
+
+    bits = pip_bits();
+    CHECK((bits & LCC_PROTOCOL_FIRMWARE_UPGRADE_ACTIVE) && !(bits & LCC_PROTOCOL_FIRMWARE_UPGRADE),
+          "PIP while frozen %012llX", (unsigned long long)bits);
+    CHECK(request(info, sizeof(info), true, r) == 8 && r[1] == 0x87 &&
+          lcc_get_be32(r + 3) == sizeof(fw_image) - 1 && r[7] == 0, "frozen space info wrong");
+
+    /* Image data, acknowledged without a reply datagram */
+    CHECK(fw_write_request(0, 64, 0x11) == 0 && fw_write_request(64, 64, 0x22) == 0 &&
+          fw_write_request(128, 10, 0x33) == 0, "firmware writes failed");
+    CHECK(fw_written == 138 && fw_image[0] == 0x11 && fw_image[64] == 0x22 &&
+          fw_image[137] == 0x33, "image stored wrong (%u bytes)", fw_written);
+    fw_write_error = LCC_ERROR_FIRMWARE_CHECKSUM;
+    CHECK(fw_write_request(138, 64, 0x44) == -LCC_ERROR_FIRMWARE_CHECKSUM, "write error not reported");
+    uint8_t rej[8];
+    CHECK(addressed_payload(LCC_MTI_DATAGRAM_REJECTED, rej) == 2, "rejection must carry only the code");
+    fw_write_error = 0;
+    CHECK(fw_write_request(sizeof(fw_image) - 8, 16, 0x55) == -0x1082, "write past the end accepted");
+
+    /* A bad image is reported and ends the upgrade without a reboot */
+    fw_unfreeze_error = LCC_ERROR_FIRMWARE_CORRUPTED;
+    const uint8_t unfreeze[] = { 0x20, 0xA0, 0xEF };
+    CHECK(request(unfreeze, sizeof(unfreeze), false, r) == -LCC_ERROR_FIRMWARE_CORRUPTED &&
+          !lcc_firmware_upgrade_active(), "bad image left the node in upgrade state");
+    bits = pip_bits();
+    CHECK((bits & LCC_PROTOCOL_FIRMWARE_UPGRADE) && !(bits & LCC_PROTOCOL_FIRMWARE_UPGRADE_ACTIVE),
+          "PIP after a failed upgrade %012llX", (unsigned long long)bits);
+    advance(500);
+    CHECK(reboot_calls == 0, "rebooted into a bad image");
+    /* JMRI unfreezes again when an Unfreeze is rejected */
+    CHECK(request(unfreeze, sizeof(unfreeze), false, r) == 0, "second unfreeze rejected");
+    advance(500);
+    CHECK(reboot_calls == 0, "second unfreeze rebooted into the bad image");
+    CHECK(fw_write_request(0, 64, 0x11) == -0x1081, "writes accepted after the upgrade ended");
+
+    /* Try again: freeze runs the application's hook again */
+    CHECK(request(freeze, sizeof(freeze), false, r) == 0 && fw_freezes == 3 &&
+          lcc_firmware_upgrade_active(), "second freeze failed");
+    CHECK(fw_write_request(0, 64, 0x66) == 0 && fw_image[0] == 0x66, "second transfer failed");
+
+    /* A good image: OK, leave upgrade state, reboot shortly after */
+    fw_unfreeze_error = 0;
+    CHECK(request(unfreeze, sizeof(unfreeze), false, r) == 0 && !lcc_firmware_upgrade_active() &&
+          fw_unfreezes == 2, "unfreeze failed");
+    CHECK(find_mti(LCC_MTI_INITIALIZATION_COMPLETE, 0) < 0,
+          "Initialization Complete before rebooting into the new image");
+    CHECK(reboot_calls == 0, "rebooted before the OK went out");
+    advance(100);
+    CHECK(reboot_calls == 1, "no reboot into the new image");
+
+    /* Unfreeze when not frozen is harmless */
+    CHECK(request(unfreeze, sizeof(unfreeze), false, r) == 0 && fw_unfreezes == 2, "stray unfreeze");
+    advance(500);
+    CHECK(reboot_calls == 1, "stray unfreeze rebooted");
+
+    /* Without firmware upgrade support */
+    setup_memconfig();
+    CHECK(request(freeze, sizeof(freeze), false, r) == -0x1081, "freeze accepted without support");
+}
+
 static void test_datagram_receive_edges(void)
 {
     setup_memconfig();
@@ -679,9 +875,11 @@ int main(void)
     test_snip();
     test_optional_interaction_rejected();
     test_events();
+    test_producer_ranges();
     test_memconfig_space_info_and_options();
     test_memconfig_read_write();
     test_memconfig_commands();
+    test_firmware_upgrade();
     test_datagram_receive_edges();
     test_datagram_send_retries();
     test_gridconnect();

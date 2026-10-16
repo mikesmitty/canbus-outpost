@@ -6,6 +6,9 @@
 static const lcc_event_t *events[LCC_MAX_EVENTS];
 static int event_count;
 
+static const lcc_producer_range_t *ranges[LCC_MAX_PRODUCER_RANGES];
+static int range_count;
+
 static const uint8_t zero_id[8];
 
 static bool id_used(const uint8_t *id)
@@ -13,26 +16,45 @@ static bool id_used(const uint8_t *id)
     return memcmp(id, zero_id, 8) != 0;
 }
 
+static uint16_t identified_mti(bool producer, lcc_event_state_t state)
+{
+    if (producer)
+        return state == LCC_EVENT_VALID   ? LCC_MTI_PRODUCER_IDENTIFIED_VALID :
+               state == LCC_EVENT_INVALID ? LCC_MTI_PRODUCER_IDENTIFIED_INVALID :
+                                            LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN;
+    return state == LCC_EVENT_VALID   ? LCC_MTI_CONSUMER_IDENTIFIED_VALID :
+           state == LCC_EVENT_INVALID ? LCC_MTI_CONSUMER_IDENTIFIED_INVALID :
+                                        LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN;
+}
+
 static void send_identified(const lcc_event_t *ev)
 {
     lcc_event_state_t state = ev->state ? ev->state(ev->arg) : LCC_EVENT_UNKNOWN;
-    uint16_t mti;
+    lcc_send_global(identified_mti(ev->producer, state), ev->id, 8);
+}
 
-    if (ev->producer) {
-        mti = state == LCC_EVENT_VALID   ? LCC_MTI_PRODUCER_IDENTIFIED_VALID :
-              state == LCC_EVENT_INVALID ? LCC_MTI_PRODUCER_IDENTIFIED_INVALID :
-                                           LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN;
-    } else {
-        mti = state == LCC_EVENT_VALID   ? LCC_MTI_CONSUMER_IDENTIFIED_VALID :
-              state == LCC_EVENT_INVALID ? LCC_MTI_CONSUMER_IDENTIFIED_INVALID :
-                                           LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN;
-    }
-    lcc_send_global(mti, ev->id, 8);
+/* Range bases with the data bits masked off; 0 = range unused */
+static uint64_t range_base(const lcc_producer_range_t *r)
+{
+    return lcc_get_be64(r->base) & ~((1ULL << r->bits) - 1);
+}
+
+/* Range identifiers mark the size with a run of equal low bits, which the
+ * bit above must differ from. */
+static void send_range_identified(const lcc_producer_range_t *r)
+{
+    uint64_t base = range_base(r);
+    uint64_t mask = (1ULL << r->bits) - 1;
+    uint64_t id = (base & (mask + 1)) ? base : base | mask;
+    uint8_t buf[8];
+    lcc_put_be64(buf, id);
+    lcc_send_global(LCC_MTI_PRODUCER_RANGE_IDENTIFIED, buf, 8);
 }
 
 void lcc_events_reset(void)
 {
     event_count = 0;
+    range_count = 0;
 }
 
 bool lcc_event_register(const lcc_event_t *event)
@@ -43,11 +65,45 @@ bool lcc_event_register(const lcc_event_t *event)
     return true;
 }
 
+bool lcc_producer_range_register(const lcc_producer_range_t *range)
+{
+    if (range_count >= LCC_MAX_PRODUCER_RANGES || range->bits < 1 || range->bits > 32)
+        return false;
+    ranges[range_count++] = range;
+    return true;
+}
+
+void lcc_producer_send_identified(uint64_t event_id, lcc_event_state_t state)
+{
+    uint8_t buf[8];
+    lcc_put_be64(buf, event_id);
+    lcc_send_global(identified_mti(true, state), buf, 8);
+}
+
 void lcc_events_identify_all(void)
 {
     for (int i = 0; i < event_count; i++) {
         if (id_used(events[i]->id))
             send_identified(events[i]);
+    }
+    for (int i = 0; i < range_count; i++) {
+        if (range_base(ranges[i]))
+            send_range_identified(ranges[i]);
+    }
+}
+
+static void identify_in_ranges(uint64_t id)
+{
+    for (int i = 0; i < range_count; i++) {
+        const lcc_producer_range_t *r = ranges[i];
+        uint64_t base = range_base(r);
+        if (!base || (id & ~((1ULL << r->bits) - 1)) != base)
+            continue;
+        if (r->identify)
+            r->identify(r->arg, id);
+        else
+            lcc_producer_send_identified(id, LCC_EVENT_UNKNOWN);
+        send_range_identified(r);
     }
 }
 
@@ -80,6 +136,7 @@ bool lcc_events_handle(uint16_t mti, const uint8_t *data, uint8_t len)
 
     if (mti == LCC_MTI_PRODUCER_IDENTIFY) {
         identify_matching(data, true);
+        identify_in_ranges(lcc_get_be64(data));
     } else if (mti == LCC_MTI_CONSUMER_IDENTIFY) {
         identify_matching(data, false);
     } else {

@@ -58,6 +58,7 @@ typedef struct {
 #define LCC_MTI_PRODUCER_IDENTIFIED_VALID    0x0544
 #define LCC_MTI_PRODUCER_IDENTIFIED_INVALID  0x0545
 #define LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN  0x0547
+#define LCC_MTI_PRODUCER_RANGE_IDENTIFIED    0x0524
 #define LCC_MTI_EVENTS_IDENTIFY_ADDRESSED    0x0968
 #define LCC_MTI_EVENTS_IDENTIFY_GLOBAL       0x0970
 #define LCC_MTI_EVENT_REPORT                 0x05B4
@@ -86,6 +87,8 @@ typedef struct {
 #define LCC_PROTOCOL_DISPLAY           (1ULL << 37)
 #define LCC_PROTOCOL_SNIP              (1ULL << 36)
 #define LCC_PROTOCOL_CDI               (1ULL << 35)
+#define LCC_PROTOCOL_FIRMWARE_UPGRADE         (1ULL << 29)
+#define LCC_PROTOCOL_FIRMWARE_UPGRADE_ACTIVE  (1ULL << 28)
 
 /* Error codes (Datagram Rejected, Optional Interaction Rejected, replies) */
 #define LCC_ERROR_PERMANENT               0x1000

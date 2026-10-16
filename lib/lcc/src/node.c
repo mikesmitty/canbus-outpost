@@ -123,6 +123,13 @@ static void begin_checking(uint32_t now)
     node.cid_deadline = now + CID_WAIT_MS;
 }
 
+void lcc_send_initialization_complete(void)
+{
+    uint8_t nid[6];
+    node_id_bytes(nid);
+    lcc_send_global(LCC_MTI_INITIALIZATION_COMPLETE, nid, 6);
+}
+
 static void claim_alias(void)
 {
     uint8_t nid[6];
@@ -132,7 +139,7 @@ static void claim_alias(void)
     send_control(LCC_CONTROL_AMD, nid, 6);
     node.state = STATE_PERMITTED;
 
-    lcc_send_global(LCC_MTI_INITIALIZATION_COMPLETE, nid, 6);
+    lcc_send_initialization_complete();
     if (lcc_config.hooks.initialized)
         lcc_config.hooks.initialized();
     lcc_events_identify_all();
@@ -182,6 +189,9 @@ static void send_protocol_support(uint16_t dst)
         p |= LCC_PROTOCOL_MEMORY_CONFIG;
     if (lcc_memconfig_has_space(LCC_SPACE_CDI))
         p |= LCC_PROTOCOL_CDI;
+    if (lcc_memconfig_has_firmware_upgrade())
+        p |= lcc_firmware_upgrade_active() ? LCC_PROTOCOL_FIRMWARE_UPGRADE_ACTIVE
+                                           : LCC_PROTOCOL_FIRMWARE_UPGRADE;
 
     uint8_t buf[6];
     lcc_put_be48(buf, p);

@@ -14,6 +14,10 @@
 #define LCC_MAX_EVENTS  48
 #endif
 
+#ifndef LCC_MAX_PRODUCER_RANGES
+#define LCC_MAX_PRODUCER_RANGES  4
+#endif
+
 typedef enum {
     LCC_EVENT_UNKNOWN,
     LCC_EVENT_VALID,
@@ -32,6 +36,32 @@ typedef struct {
 
 /* Add an event. The struct must stay valid; returns false when full. */
 bool lcc_event_register(const lcc_event_t *event);
+
+/*
+ * A block of 2^bits event IDs this node produces, all sharing the base's
+ * upper bits; the lower bits carry data (a DCC detector puts a loco
+ * address there, for example). The library advertises it with Producer
+ * Range Identified.
+ */
+typedef struct {
+    /* 8-byte big-endian; the low `bits` bits are ignored. Read on every
+     * use, like lcc_event_t.id. A base whose upper bits are all zero is
+     * skipped. */
+    const uint8_t *base;
+    uint8_t bits;                             /* 1-32 */
+    /* Identify Producer for an ID in the range: reply with
+     * lcc_producer_send_identified() (at least for event_id itself). The
+     * library follows it with Producer Range Identified. NULL = reply
+     * Unknown. */
+    void (*identify)(uintptr_t arg, uint64_t event_id);
+    uintptr_t arg;
+} lcc_producer_range_t;
+
+/* Add a producer range. The struct must stay valid; returns false when full. */
+bool lcc_producer_range_register(const lcc_producer_range_t *range);
+
+/* Send Producer Identified Valid/Invalid/Unknown for one event ID. */
+void lcc_producer_send_identified(uint64_t event_id, lcc_event_state_t state);
 
 /* Send an Event Report. */
 void lcc_event_send(const uint8_t *id);

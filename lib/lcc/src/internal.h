@@ -36,6 +36,7 @@ static inline void lcc_timer_min(uint32_t *next, bool armed, uint32_t now,
 }
 
 void lcc_send_frame(const lcc_frame_t *frame);
+void lcc_send_initialization_complete(void);
 void lcc_send_global(uint16_t mti, const uint8_t *data, uint8_t len);
 void lcc_send_addressed(uint16_t mti, uint16_t dst_alias,
                         const uint8_t *data, uint8_t len);
@@ -61,5 +62,6 @@ void lcc_memconfig_run_timers(uint32_t now);
 uint32_t lcc_memconfig_next_timer(uint32_t now);
 bool lcc_memconfig_has_space(uint8_t space);
 bool lcc_memconfig_has_spaces(void);
+bool lcc_memconfig_has_firmware_upgrade(void);
 
 #endif /* LCC_INTERNAL_H */
