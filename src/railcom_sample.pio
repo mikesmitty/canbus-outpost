@@ -2,24 +2,26 @@
 
 ; High-speed sampler for RailCom detection.
 ;
-; Continuously samples 8 consecutive GPIO pins at 2MHz, capturing
-; all 4 RailCom channels (A and B per channel) simultaneously.
+; Continuously samples 16 consecutive GPIO pins at 2MHz, capturing all 4
+; RailCom channels (A and B per channel) and the cutout signal at once.
 ; DMA drains the RX FIFO to a ring buffer for CPU processing.
 ;
-; Pin layout (IN base = RC_CH1_A, GPIO 17):
+; Pin layout (IN base = RC_SAMPLE_BASE_PIN, GPIO 17):
 ;   bit 0 = CH1_A (GPIO 17)    bit 1 = CH1_B (GPIO 18)
 ;   bit 2 = CH2_A (GPIO 19)    bit 3 = CH2_B (GPIO 20)
 ;   bit 4 = CH3_A (GPIO 21)    bit 5 = CH3_B (GPIO 22)
 ;   bit 6 = CH4_A (GPIO 23)    bit 7 = CH4_B (GPIO 24)
+;   bit 12 = CUTOUT_SIGNAL (GPIO 29)
+;   other bits unused
 ;
 ; Config:
-;   IN base: GPIO 17 (RC_CH1_A)
-;   Shift: right, autopush at 32 bits (4 samples per word)
+;   IN base: GPIO 17 (RC_SAMPLE_BASE_PIN)
+;   Shift: right, autopush at 32 bits (2 samples per word, oldest in the low half)
 ;   FIFO: join RX (8-deep)
 ;   Clock: clk_sys / 2MHz = 1 sample every 0.5µs
 
 .wrap_target
-    in pins, 8
+    in pins, 16
 .wrap
 
 % c-sdk {

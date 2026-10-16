@@ -1,129 +1,17 @@
 #include <stdio.h>
-#include <string.h>
 #include "pico/stdlib.h"
-#include "pico/unique_id.h"
-#include "hardware/irq.h"
+#include "pico/stdio_rtt.h"
 #include "FreeRTOS.h"
 #include "task.h"
-#include "board.h"
-#include "can2040.h"
+#include "app/app.h"
+#include "app/version.h"
+#include "can_bus.h"
+#include "lcc_task.h"
+#include "node_id.h"
+#include "railcom.h"
 #include "servo.h"
-#include "lcc.h"
-#include "identify_led.h"
-#include "gridconnect.h"
+#include "usb_gridconnect.h"
 #include "util/dbg.h"
-#include "SEGGER_RTT.h"
-
-/* ------------------------------------------------------------------ */
-/* CAN bus (can2040 on PIO1)                                          */
-/* ------------------------------------------------------------------ */
-
-static struct can2040 cbus;
-static lcc_node_t lcc_node;
-
-static void can2040_cb(struct can2040 *cd, uint32_t notify,
-                       struct can2040_msg *msg)
-{
-    (void)cd;
-    if (notify == CAN2040_NOTIFY_RX) {
-        lcc_frame_t frame;
-        frame.id = msg->id & 0x1FFFFFFF;  /* strip EFF flag */
-        frame.dlc = (uint8_t)msg->dlc;
-        memcpy(frame.data, msg->data, 8);
-
-        BaseType_t woken = pdFALSE;
-        xQueueSendFromISR(lcc_node.can_rx_queue, &frame, &woken);
-        xQueueSendFromISR(lcc_node.gc_tx_queue, &frame, &woken);
-        portYIELD_FROM_ISR(woken);
-    }
-}
-
-static void PIO1_IRQHandler(void)
-{
-    can2040_pio_irq_handler(&cbus);
-}
-
-static void can_init(void)
-{
-    DBG("can_init: can2040_setup\n");
-    can2040_setup(&cbus, 1); /* PIO1 */
-    can2040_callback_config(&cbus, can2040_cb);
-
-    uint32_t pio1_irq = PIO1_IRQ_0;
-    irq_set_exclusive_handler(pio1_irq, PIO1_IRQHandler);
-    irq_set_priority(pio1_irq, configMAX_SYSCALL_INTERRUPT_PRIORITY);
-    irq_set_enabled(pio1_irq, true);
-
-    DBG("can_init: can2040_start\n");
-    can2040_start(&cbus, configCPU_CLOCK_HZ, LCC_CAN_BITRATE,
-                  CAN_RX_PIN, CAN_TX_PIN);
-
-    DBG("can_init: initialized on PIO1, %d bps\n", LCC_CAN_BITRATE);
-}
-
-/* ------------------------------------------------------------------ */
-/* CAN TX task — drains can_tx_queue and transmits via can2040         */
-/* ------------------------------------------------------------------ */
-
-static void can_tx_task(void *param)
-{
-    lcc_node_t *node = (lcc_node_t *)param;
-    lcc_frame_t frame;
-
-    can_init();
-
-    while (1) {
-        if (xQueueReceive(node->can_tx_queue, &frame, portMAX_DELAY)) {
-            struct can2040_msg msg;
-            msg.id = frame.id | CAN2040_ID_EFF;
-            msg.dlc = frame.dlc;
-            memcpy(msg.data, frame.data, 8);
-
-            /* Retry until transmit buffer available */
-            while (can2040_transmit(&cbus, &msg) < 0) {
-                vTaskDelay(pdMS_TO_TICKS(1));
-            }
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/* GridConnect task — USB CDC bridge                                   */
-/* ------------------------------------------------------------------ */
-
-static void gc_task(void *param)
-{
-    lcc_node_t *node = (lcc_node_t *)param;
-    gc_parser_t parser;
-    memset(&parser, 0, sizeof(parser));
-
-    while (1) {
-        /* TX: drain gc_tx_queue → encode → USB (stdio also sends to RTT) */
-        lcc_frame_t frame;
-        while (xQueueReceive(node->gc_tx_queue, &frame, 0) == pdTRUE) {
-            char buf[GC_MAX_LEN];
-            int len = gc_encode(&frame, buf, sizeof(buf));
-            if (len > 0) {
-                for (int i = 0; i < len; i++)
-                    putchar_raw(buf[i]);
-            }
-        }
-
-        /* RX: USB/RTT → parse GridConnect → inject to CAN + LCC */
-        int c = getchar_timeout_us(0);
-        while (c != PICO_ERROR_TIMEOUT) {
-            lcc_frame_t rx_frame;
-            if (gc_parse_byte(&parser, (char)c, &rx_frame)) {
-                xQueueSend(node->can_rx_queue, &rx_frame, 0);
-                xQueueSend(node->can_tx_queue, &rx_frame, 0);
-            }
-            c = getchar_timeout_us(0);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-}
-
 
 /* ------------------------------------------------------------------ */
 /* Stack overflow hook                                                */
@@ -138,20 +26,55 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 }
 
 /* ------------------------------------------------------------------ */
-/* Node ID from board unique ID                                       */
+/* Diagnostic HardFault handler — prints state to RTT before halting. */
+/*                                                                    */
+/* Default SDK behaviour calls panic()/__breakpoint(), which is a     */
+/* silent no-op when no debugger has DEBUGEN set, so faults present   */
+/* as a freeze with zero log. This handler captures the auto-stacked  */
+/* exception frame and the SCB fault-status registers and prints them */
+/* over RTT before parking in an infinite loop.                       */
 /* ------------------------------------------------------------------ */
 
-static uint64_t get_node_id(void)
+static void __attribute__((used)) fault_handler_c(uint32_t *stack)
 {
-    pico_unique_board_id_t board_id;
-    pico_get_unique_board_id(&board_id);
+    uint32_t r0  = stack[0];
+    uint32_t r1  = stack[1];
+    uint32_t r2  = stack[2];
+    uint32_t r3  = stack[3];
+    uint32_t r12 = stack[4];
+    uint32_t lr  = stack[5];
+    uint32_t pc  = stack[6];
+    uint32_t psr = stack[7];
 
-    /* Use bottom 6 bytes as 48-bit LCC node ID */
-    uint64_t nid = 0;
-    for (int i = 2; i < 8; i++)
-        nid = (nid << 8) | board_id.id[i];
+    uint32_t cfsr  = *(volatile uint32_t *)0xE000ED28u;
+    uint32_t hfsr  = *(volatile uint32_t *)0xE000ED2Cu;
+    uint32_t mmfar = *(volatile uint32_t *)0xE000ED34u;
+    uint32_t bfar  = *(volatile uint32_t *)0xE000ED38u;
+    uint32_t shcsr = *(volatile uint32_t *)0xE000ED24u;
 
-    return nid;
+    DBG("\n!!! HardFault on core %u !!!\n", (unsigned)get_core_num());
+    DBG("  PC=%08lx  LR=%08lx  PSR=%08lx\n",
+        (unsigned long)pc, (unsigned long)lr, (unsigned long)psr);
+    DBG("  R0=%08lx R1=%08lx R2=%08lx R3=%08lx R12=%08lx\n",
+        (unsigned long)r0, (unsigned long)r1, (unsigned long)r2,
+        (unsigned long)r3, (unsigned long)r12);
+    DBG("  CFSR=%08lx HFSR=%08lx SHCSR=%08lx\n",
+        (unsigned long)cfsr, (unsigned long)hfsr, (unsigned long)shcsr);
+    DBG("  MMFAR=%08lx BFAR=%08lx\n",
+        (unsigned long)mmfar, (unsigned long)bfar);
+
+    while (1) { tight_loop_contents(); }
+}
+
+void __attribute__((naked, used)) isr_hardfault(void)
+{
+    __asm volatile (
+        "tst lr, #4         \n"
+        "ite eq             \n"
+        "mrseq r0, msp      \n"
+        "mrsne r0, psp      \n"
+        "b fault_handler_c  \n"
+    );
 }
 
 /* ------------------------------------------------------------------ */
@@ -172,46 +95,33 @@ void vApplicationMallocFailedHook(void)
 int main(void)
 {
     stdio_init_all();
+    /* RTT carries the debug log (DBG); keep GridConnect traffic off it */
+    stdio_set_driver_enabled(&stdio_rtt, false);
 
-    DBG("canbus-outpost starting (built " __DATE__ " " __TIME__ ")\n");
+    DBG("canbus-outpost %s starting\n", FIRMWARE_SW_VERSION);
+
+    bool assigned;
+    uint64_t node_id = node_id_load(&assigned);
+    char id[18];
+    node_id_format(node_id, id);
+    DBG("Node ID %s%s\n", id,
+        assigned ? "" : " (temporary: set one with the 'nodeid' USB command)");
 
     servo_init();
-    DBG("Main: servo_init done (all outputs at 0%% duty)\n");
+    lcc_task_init(node_id);
+    app_init(node_id, assigned);
+    railcom_init();
+    can_bus_init();
+    usb_gc_init();
 
-    uint64_t node_id = get_node_id();
-    DBG("Main: Node ID: %012llX\n", node_id);
+    xTaskCreate(lcc_task, "lcc", 2048, NULL, 2, NULL);
+    xTaskCreate(can_bus_task, "can", 1024, NULL, 3, NULL);
+    xTaskCreate(usb_gc_rx_task, "usb_rx", 1024, NULL, 1, NULL);
+    xTaskCreate(usb_gc_tx_task, "usb_tx", 1024, NULL, 1, NULL);
+    /* Highest priority: railcom_task must copy each cutout out of the
+     * 4 ms DMA ring before it is overwritten. */
+    xTaskCreate(railcom_task, "railcom", 2048, NULL, configMAX_PRIORITIES - 1, NULL);
 
-    lcc_init(&lcc_node, node_id);
-    DBG("Main: lcc_init done\n");
-    identify_led_init(&lcc_node.config.identify);
-    DBG("Main: identify_led_init done\n");
-
-    /* Drive each enabled servo to its default position before starting scheduler */
-    for (int i = 0; i < LCC_NUM_SERVOS; i++) {
-        lcc_servo_config_t *sc = &lcc_node.config.servos[i];
-        DBG("Main: servo %d throw=%016llX close=%016llX en=%d default=%d\n",
-            i, sc->throw_event, sc->close_event, sc->enabled, sc->default_state);
-        if (sc->enabled && sc->default_state != LCC_SERVO_DEFAULT_NO_CHANGE) {
-            bool closed = (sc->default_state == LCC_SERVO_DEFAULT_CLOSED);
-            uint16_t pos;
-            if (closed)
-                pos = sc->reversed ? sc->thrown_position : sc->closed_position;
-            else
-                pos = sc->reversed ? sc->closed_position : sc->thrown_position;
-            servo_set_position(i, pos);
-            DBG("Main: servo %d -> %s (pos=%u)\n", i, closed ? "closed" : "thrown", pos);
-        }
-        /* Disabled servos remain at 0% duty from servo_init() */
-    }
-
-    xTaskCreate(lcc_task, "lcc", 4096, &lcc_node, 2, NULL);
-    xTaskCreate(can_tx_task, "can_tx", 1024, &lcc_node, 3, NULL);
-    xTaskCreate(gc_task, "gc", 2048, &lcc_node, 1, NULL);
-
-    DBG("Main: Tasks created\n");
-
-    DBG("Main: vTaskStartScheduler starting\n");
     vTaskStartScheduler();
-
     return 0;
 }

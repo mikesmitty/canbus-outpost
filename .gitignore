@@ -7,3 +7,9 @@ hardware/**/production/
 build
 !.vscode/*
 /.cache
+
+# Host test binaries
+lib/lcc/test/test_lcc
+test/test_cdi_layout
+test/test_railcom
+*.dSYM/

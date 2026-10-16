@@ -4,8 +4,8 @@
       "release-type": "simple",
       "bump-minor-pre-major": true,
       "extra-files": [
-        "src/lcc.h",
-        "src/cdi_data.c",
+        "src/app/version.h",
+        "src/app/cdi_data.c",
         "CMakeLists.txt"
       ],
       "changelog-sections": [

@@ -1,12 +1,40 @@
 #include "railcom.h"
 #include "board.h"
-#include "hardware/pio.h"
-#include "hardware/dma.h"
 #include "hardware/clocks.h"
+#include "hardware/dma.h"
+#include "hardware/gpio.h"
+#include "hardware/irq.h"
+#include "hardware/pio.h"
 #include "railcom_sample.pio.h"
-#include "pico/multicore.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <string.h>
 #include "util/dbg.h"
+
+// ---------------------------------------------------------------------------
+// Hardware
+//
+// Each block has a 1.8 Ω shunt in its TRACK_Rn lead, read by a TLV3202
+// window comparator and passed through an ISO7720 to two GPIOs:
+//   A: high while current flows from the TRACK_Rn rail into BOOSTER_R
+//   B: high while current flows from BOOSTER_R out to the TRACK_Rn rail
+// Both are low below ~8 mA. A RailCom "0" bit is at least 10 mA in one
+// direction or the other, so the UART line is !(A || B): idle (mark) when
+// both are low.
+//
+// CUTOUT_SIGNAL comes from an AC-input optocoupler across the booster
+// output: low while DCC is on the rails, high while the booster holds the
+// cutout. Its falling edge follows the end of the cutout within a few µs,
+// while its rising edge lags the start by the opto's slow turn-off, so all
+// timing is measured back from the falling edge.
+//
+// A PIO state machine samples 16 GPIOs at 2 MHz into a DMA ring buffer. The
+// falling edge of CUTOUT_SIGNAL wakes railcom_task, which finds the cutout
+// in the ring, copies it out and decodes all four blocks.
+//
+// "Block" below means one detector input (the public API calls it a
+// channel); "channel 1" and "channel 2" are the RailCom datagram windows.
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // RailCom 4/8 decode table (RCN-217)
@@ -30,506 +58,571 @@ static const uint8_t decode_table[256] = {
     0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 };
 
+#define CODE_INVALID        0xFF  // decode_table value for a byte that isn't a 4/8 code
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 #define SAMPLE_RATE_HZ      2000000
-#define SAMPLES_PER_BIT     (SAMPLE_RATE_HZ / 250000)  // 8
+#define SAMPLES_PER_US      (SAMPLE_RATE_HZ / 1000000)  // 2
+#define SAMPLES_PER_BIT     (SAMPLE_RATE_HZ / 250000)   // 8 at 250 kbps
 
-// Cutout detection: A != B for >15µs = 30 samples at 2MHz
-#define SILENCE_THRESHOLD   30
+// Ring buffer of 16-bit samples, written forever by DMA: 16 KB = 4.1 ms
+#define RING_BITS           14
+#define RING_BYTES          (1u << RING_BITS)
+#define RING_SAMPLES        (RING_BYTES / sizeof(uint16_t))
+#define RING_MASK           (RING_SAMPLES - 1)
 
-// Cutout window: process samples for 450µs after cutout confirmation
-// (~465µs from actual cutout start, within the ~488µs cutout)
-#define CUTOUT_WINDOW       900  // samples at 2MHz
+// Times are in µs after the zero crossing of the packet end bit (S-9.3.2
+// Table 1). The CUTOUT_SIGNAL falling edge is taken as the nominal cutout
+// end (TCE 454-488 µs) plus ~4 µs of opto turn-on, which puts every time
+// estimate within about ±20 µs of the true time.
+#define CUTOUT_END_US       475
+#define WINDOW_START_US     40    // after the cutout starts (TCS 26-32 µs)
+#define WINDOW_END_GAP      4     // samples dropped just before the falling edge
+#define CH1_START_MIN_US    55    // channel 1 starts at TTS1 = 80 µs
+#define CH2_START_MIN_US    165   // last channel 1 byte starts by 137 µs; channel 2 at TTS2 = 193 µs
 
-// Ring buffer: 4KB = 1024 uint32_t words = ~2ms of sample data
-#define RING_BITS           12
-#define RING_SIZE           (1u << RING_BITS)
-#define RING_WORDS          (RING_SIZE / sizeof(uint32_t))
-#define RING_MASK           (RING_WORDS - 1)
+// A CUTOUT_SIGNAL high period in this range counts as a cutout. The cutout
+// lasts 422-462 µs; the opto's turn-off delay shortens what the pin shows.
+#define CUTOUT_MIN_US       200
+#define CUTOUT_MAX_US       600
 
-// DMA restarts after this many transfers (~143 minutes at 2MHz)
-#define DMA_XFER_COUNT      (0xFFFFFC00u)  // ~4 billion, aligned to RING_WORDS
+#define WINDOW_OFFSET       ((CUTOUT_END_US - WINDOW_START_US) * SAMPLES_PER_US)
+#define WINDOW_SAMPLES      (WINDOW_OFFSET - WINDOW_END_GAP)
+#define SEARCH_LIMIT        (RING_SAMPLES / 2)  // how far back to look for the falling edge
+#define COPY_DEADLINE_US    1000                // window must be copied out within this
 
-#define RC_MAX_BYTES        12  // max bytes per cutout per pin
+// Each bit is read as the majority of samples 3, 4 and 5 of its 8.
+#define BIT_SAMPLE_OFFSET   3
+#define BYTE_LAST_SAMPLE    (9 * SAMPLES_PER_BIT + BIT_SAMPLE_OFFSET + 2)  // last sample of the stop bit read
+#define MIN_IDLE_SAMPLES    SAMPLES_PER_BIT  // idle needed before a byte that doesn't follow another
+
+#define ADDR_PAIR_MAX_US    250000   // ADR1 and ADR2 must arrive this close together
+#define ADDR_TIMEOUT_US     1000000  // no address datagram for this long: block vacated
+#define SIGNAL_TIMEOUT_US   500000   // no cutout for this long: RailCom signal lost
+#define HOUSEKEEPING_MS     100
+#define DIAG_PERIOD_US      2000000
+
+// Set to a block index (0-3) to print that block's A/B pins and
+// CUTOUT_SIGNAL for one cutout with each diagnostic report.
+#ifndef RAILCOM_TRACE_BLOCK
+#define RAILCOM_TRACE_BLOCK (-1)
+#endif
 
 // ---------------------------------------------------------------------------
-// Software UART types
+// Pin to sample-bit mapping
 // ---------------------------------------------------------------------------
-typedef enum {
-    UART_IDLE,
-    UART_START_BIT,
-    UART_DATA_BITS,
-    UART_STOP_BIT,
-} uart_state_t;
+#define RC_BIT(pin)         ((pin) - RC_SAMPLE_BASE_PIN)
+#define RC_PIN_OK(pin)      ((pin) >= RC_SAMPLE_BASE_PIN && (pin) < RC_SAMPLE_BASE_PIN + 16)
 
+_Static_assert(RC_PIN_OK(RC_CH1_A) && RC_PIN_OK(RC_CH1_B) &&
+               RC_PIN_OK(RC_CH2_A) && RC_PIN_OK(RC_CH2_B) &&
+               RC_PIN_OK(RC_CH3_A) && RC_PIN_OK(RC_CH3_B) &&
+               RC_PIN_OK(RC_CH4_A) && RC_PIN_OK(RC_CH4_B) &&
+               RC_PIN_OK(RC_CUTOUT_PIN),
+               "RailCom pins must fall within the 16 GPIOs the PIO samples");
+
+#define CUTOUT_MASK         ((uint16_t)(1u << RC_BIT(RC_CUTOUT_PIN)))
+
+static const uint16_t blk_a_mask[RAILCOM_MAX_CHANNELS] = {
+    1u << RC_BIT(RC_CH1_A), 1u << RC_BIT(RC_CH2_A),
+    1u << RC_BIT(RC_CH3_A), 1u << RC_BIT(RC_CH4_A),
+};
+static const uint16_t blk_b_mask[RAILCOM_MAX_CHANNELS] = {
+    1u << RC_BIT(RC_CH1_B), 1u << RC_BIT(RC_CH2_B),
+    1u << RC_BIT(RC_CH3_B), 1u << RC_BIT(RC_CH4_B),
+};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 typedef struct {
-    uart_state_t state;
-    uint8_t sample_count;
-    uint8_t bit_count;
-    uint8_t shift_reg;
-    bool last_val;
-} soft_uart_t;
+    // Channel 1 address halves: ADR1 (adr_high) and ADR2 (adr_low) arrive
+    // in alternate cutouts. A receive time of 0 means not received.
+    uint8_t  adr_high;
+    uint8_t  adr_low;
+    uint64_t high_us;
+    uint64_t low_us;
+    uint64_t last_adr_us;
 
-// ---------------------------------------------------------------------------
-// Per-channel decoder state (lives on core 1)
-// ---------------------------------------------------------------------------
-typedef struct {
-    uint16_t silence_count;
-    bool in_cutout;
-    uint16_t cutout_count;
-    soft_uart_t uart_nand;  // Capture A=1, B=1 pulses (!(A && B) logic)
-    soft_uart_t uart_or;    // Capture A=0, B=0 pulses (A || B logic)
-    uint8_t rx_buf_nand[RC_MAX_BYTES];
-    uint8_t rx_buf_or[RC_MAX_BYTES];
-    uint8_t rx_count_nand;
-    uint8_t rx_count_or;
-} rc_decoder_t;
+    // An assembled address must repeat before it is reported
+    railcom_data_t candidate;
+    uint8_t candidate_count;
 
-// ---------------------------------------------------------------------------
-// Per-channel state on core 0
-// ---------------------------------------------------------------------------
-typedef struct {
-    railcom_data_t last_nand;
-    railcom_data_t last_or;
-    bool signal_active;
-    absolute_time_t last_valid_cutout;
-    bool last_nand_valid;   // True if last data was from NAND decoder (orientation)
-} rc_channel_t;
+    railcom_data_t reported;
+} rc_block_t;
 
-// ---------------------------------------------------------------------------
-// Module state
-// ---------------------------------------------------------------------------
-static uint32_t __attribute__((aligned(RING_SIZE))) ring_buf[RING_WORDS];
+static uint16_t __attribute__((aligned(RING_BYTES))) ring[RING_SAMPLES];
+static uint16_t window[WINDOW_SAMPLES];
 
 static PIO sample_pio;
 static uint sample_sm;
 static uint dma_chan;
-static dma_channel_config dma_cfg;
+static TaskHandle_t rc_task;
 
-static rc_decoder_t decoders[RAILCOM_MAX_CHANNELS];
-static rc_channel_t channels[RAILCOM_MAX_CHANNELS];
+static rc_block_t blocks[RAILCOM_MAX_CHANNELS];
+static bool signal_active;
+static uint64_t last_cutout_us;
 
-// Shared core 1 -> core 0 (written by core 1, read+cleared by core 0)
-static volatile bool     cutout_flag[RAILCOM_MAX_CHANNELS];
-static volatile uint16_t result_addr_nand[RAILCOM_MAX_CHANNELS];
-static volatile uint16_t result_addr_or[RAILCOM_MAX_CHANNELS];
-static volatile bool     result_valid_nand[RAILCOM_MAX_CHANNELS];
-static volatile bool     result_valid_or[RAILCOM_MAX_CHANNELS];
+static struct {
+    uint32_t edges;          // CUTOUT_SIGNAL falling edges
+    uint32_t cutouts;        // accepted cutouts
+    uint32_t short_high;     // high period below CUTOUT_MIN_US (glitch, or opto too slow)
+    uint32_t long_high;      // high period above CUTOUT_MAX_US (track power returning)
+    uint32_t no_edge;        // woken but no falling edge found in the ring
+    uint32_t overruns;       // window overwritten before it was copied
+    uint32_t high_min_us;    // observed high period, reset at each report
+    uint32_t high_max_us;
+    uint32_t bytes[RAILCOM_MAX_CHANNELS];      // bytes in the channel 1/2 windows
+    uint32_t framing[RAILCOM_MAX_CHANNELS];    // bytes with a bad stop bit
+    uint32_t ch1_ok[RAILCOM_MAX_CHANNELS];     // valid channel 1 datagrams
+    uint32_t ch1_bad[RAILCOM_MAX_CHANNELS];    // wrong byte count or invalid code (often collisions)
+    uint32_t ch2_bytes[RAILCOM_MAX_CHANNELS];
+    uint32_t addr_bad[RAILCOM_MAX_CHANNELS];   // ADR1/ADR2 pair that isn't a valid address
+} stats = { .high_min_us = UINT32_MAX };
 
-// DMA restart flag (core 0 ISR -> core 1)
-static volatile bool dma_restarted;
-
-// Diagnostics (written by core 1, read by core 0)
-#define TRACE_MAX_SAMPLES   960   // must be multiple of 8; covers full 900-sample cutout
-#define TRACE_BYTES         (TRACE_MAX_SAMPLES / 8)  // 120
-#define TRACE_LINE_SAMPLES  80    // samples per printed line (10 bit periods)
-
-static volatile struct {
-    uint32_t total_samples;
-    uint32_t cutouts_detected[RAILCOM_MAX_CHANNELS];
-    // Ch0 A/B pin trace: one cutout's worth of packed pin samples
-    uint8_t trace_a[TRACE_BYTES];
-    uint8_t trace_b[TRACE_BYTES];
-    uint16_t trace_len;        // actual samples captured (up to TRACE_MAX_SAMPLES)
-    bool trace_ready;          // set by core 1 at cutout end, cleared by core 0 after print
-} rc_diag;
+#if RAILCOM_TRACE_BLOCK >= 0
+static uint16_t trace[WINDOW_SAMPLES];
+static bool trace_ready;
+#endif
 
 // ---------------------------------------------------------------------------
-// Software UART
+// Byte decoding
 // ---------------------------------------------------------------------------
-static void soft_uart_reset(soft_uart_t *u) {
-    u->state = UART_IDLE;
-    u->sample_count = 0;
-    u->bit_count = 0;
-    u->shift_reg = 0;
-    u->last_val = true;   // NAND and OR signals are HIGH during cutout idle (A != B)
+
+// True if the line is in the space state (current flowing, a "0") for most
+// of the samples read from the bit that starts at w[i].
+static inline bool bit_is_space(const uint16_t *w, int i, uint16_t m)
+{
+    const uint16_t *s = &w[i + BIT_SAMPLE_OFFSET];
+    return ((s[0] & m) != 0) + ((s[1] & m) != 0) + ((s[2] & m) != 0) >= 2;
 }
 
-static inline void soft_uart_process(soft_uart_t *u, bool val,
-                                     uint8_t *buf, uint8_t *count) {
-    switch (u->state) {
-    case UART_IDLE:
-        if (u->last_val && !val) {
-            u->state = UART_START_BIT;
-            u->sample_count = 1;
-        }
-        break;
+typedef enum { BYTE_OK, BYTE_GLITCH, BYTE_FRAMING } byte_result_t;
 
-    case UART_START_BIT:
-        u->sample_count++;
-        if (u->sample_count == SAMPLES_PER_BIT / 2) {
-            if (!val) {
-                u->state = UART_DATA_BITS;
-                u->sample_count = 0;
-                u->bit_count = 0;
-                u->shift_reg = 0;
-            } else {
-                u->state = UART_IDLE;
-            }
-        }
-        break;
+// Reads a UART byte (start bit, 8 data bits LSB first, stop bit) whose
+// start bit begins at w[i].
+static byte_result_t read_byte(const uint16_t *w, int i, uint16_t m, uint8_t *out)
+{
+    if (!bit_is_space(w, i, m))
+        return BYTE_GLITCH;
 
-    case UART_DATA_BITS:
-        u->sample_count++;
-        if (u->sample_count == SAMPLES_PER_BIT) {
-            u->shift_reg >>= 1;
-            if (val) u->shift_reg |= 0x80;
-            u->bit_count++;
-            u->sample_count = 0;
-            if (u->bit_count == 8) {
-                u->state = UART_STOP_BIT;
-            }
-        }
-        break;
-
-    case UART_STOP_BIT:
-        u->sample_count++;
-        if (u->sample_count == SAMPLES_PER_BIT) {
-            if (val && *count < RC_MAX_BYTES) {
-                buf[(*count)++] = u->shift_reg;
-            }
-            u->state = UART_IDLE;
-        }
-        break;
+    uint8_t v = 0;
+    for (int b = 0; b < 8; b++) {
+        if (!bit_is_space(w, i + (b + 1) * SAMPLES_PER_BIT, m))
+            v |= 1u << b;
     }
 
-    u->last_val = val;
+    if (bit_is_space(w, i + 9 * SAMPLES_PER_BIT, m))
+        return BYTE_FRAMING;
+
+    *out = v;
+    return BYTE_OK;
 }
 
 // ---------------------------------------------------------------------------
-// RailCom address decode
+// Address handling (S-9.3.2 Table 19)
 // ---------------------------------------------------------------------------
-static bool decode_address(const uint8_t *buf, uint8_t count, uint16_t *addr) {
-    if (count < 2) return false;
-
-    for (int i = 0; i <= count - 2; i++) {
-        uint8_t hi = decode_table[buf[i]];
-        uint8_t lo = decode_table[buf[i + 1]];
-        if (hi < 64 && lo < 64) {
-            *addr = ((uint16_t)hi << 6) | lo;
-            return true;
-        }
+static bool assemble_address(uint8_t hi, uint8_t lo, railcom_data_t *d)
+{
+    if (hi == 0x00) {                 // base address: 0 A6..A0
+        if (lo & 0x80)
+            return false;
+        d->address = lo;
+        d->addr_type = RAILCOM_ADDR_SHORT;
+    } else if (hi == 0x60) {          // consist address: R A6..A0 (R = direction)
+        d->address = lo & 0x7F;
+        d->addr_type = RAILCOM_ADDR_CONSIST;
+    } else if ((hi & 0xC0) == 0x80) { // extended address: 10 A13..A8, A7..A0
+        d->address = ((uint16_t)(hi & 0x3F) << 8) | lo;
+        d->addr_type = RAILCOM_ADDR_LONG;
+    } else {
+        return false;
     }
-    return false;
+    return d->address != 0;
 }
 
-// ---------------------------------------------------------------------------
-// Core 1: sample processing
-// ---------------------------------------------------------------------------
-static void process_cutout_end(int ch) {
-    rc_decoder_t *d = &decoders[ch];
-    uint16_t addr;
-
-    bool vn = decode_address(d->rx_buf_nand, d->rx_count_nand, &addr);
-    if (vn) result_addr_nand[ch] = addr;
-
-    bool vo = decode_address(d->rx_buf_or, d->rx_count_or, &addr);
-    if (vo) result_addr_or[ch] = addr;
-
-    result_valid_nand[ch] = vn;
-    result_valid_or[ch] = vo;
-    __dmb();
-    cutout_flag[ch] = true;
+static bool same_data(const railcom_data_t *a, const railcom_data_t *b)
+{
+    return a->address == b->address && a->occupied == b->occupied &&
+           a->addr_type == b->addr_type && a->orientation == b->orientation;
 }
 
-static void process_sample(uint8_t sample) {
-    rc_diag.total_samples++;
+static void handle_ch1(int blk, uint8_t id, uint8_t data,
+                       railcom_orient_t orient, uint64_t now)
+{
+    rc_block_t *b = &blocks[blk];
+    uint64_t other_us;
 
-    for (int ch = 0; ch < RAILCOM_MAX_CHANNELS; ch++) {
-        rc_decoder_t *d = &decoders[ch];
-        bool a = (sample >> (ch * 2)) & 1;
-        bool b = (sample >> (ch * 2 + 1)) & 1;
+    if (id == 1) {
+        b->adr_high = data;
+        b->high_us = now;
+        other_us = b->low_us;
+    } else if (id == 2) {
+        b->adr_low = data;
+        b->low_us = now;
+        other_us = b->high_us;
+    } else {
+        return;  // ID 3 (driving info) and others aren't used
+    }
 
-        if (!d->in_cutout) {
-            if (a != b) {
-                d->silence_count++;
-                if (d->silence_count >= SILENCE_THRESHOLD) {
-                    d->in_cutout = true;
-                    d->cutout_count = 0;
-                    soft_uart_reset(&d->uart_nand);
-                    soft_uart_reset(&d->uart_or);
-                    d->rx_count_nand = 0;
-                    d->rx_count_or = 0;
-                    rc_diag.cutouts_detected[ch]++;
-                }
-            } else {
-                d->silence_count = 0;
-            }
-        } else {
-            d->cutout_count++;
+    b->last_adr_us = now;
+    if (other_us == 0 || now - other_us > ADDR_PAIR_MAX_US)
+        return;
 
-            // Capture Ch0 A/B pin trace for diagnostics
-            if (ch == 0 && !rc_diag.trace_ready) {
-                uint16_t pos = d->cutout_count - 1;
-                if (pos < TRACE_MAX_SAMPLES) {
-                    if (a) rc_diag.trace_a[pos / 8] |= (1u << (pos % 8));
-                    if (b) rc_diag.trace_b[pos / 8] |= (1u << (pos % 8));
-                }
-            }
+    railcom_data_t d = { .occupied = true, .orientation = orient };
+    if (!assemble_address(b->adr_high, b->adr_low, &d)) {
+        stats.addr_bad[blk]++;
+        return;
+    }
 
-            soft_uart_process(&d->uart_nand, !(a && b),
-                              d->rx_buf_nand, &d->rx_count_nand);
-            soft_uart_process(&d->uart_or, (a || b),
-                              d->rx_buf_or, &d->rx_count_or);
+    if (same_data(&d, &b->candidate)) {
+        if (b->candidate_count < UINT8_MAX)
+            b->candidate_count++;
+    } else {
+        b->candidate = d;
+        b->candidate_count = 1;
+    }
 
-            if (d->cutout_count >= CUTOUT_WINDOW) {
-                if (ch == 0 && !rc_diag.trace_ready) {
-                    rc_diag.trace_len = (d->cutout_count < TRACE_MAX_SAMPLES) ?
-                                         d->cutout_count : TRACE_MAX_SAMPLES;
-                    rc_diag.trace_ready = true;
-                }
-                process_cutout_end(ch);
-                d->in_cutout = false;
-                d->silence_count = 0;
-            }
-        }
+    if (b->candidate_count >= 2 && !same_data(&b->candidate, &b->reported)) {
+        b->reported = b->candidate;
+        railcom_on_data(blk, &b->reported);
     }
 }
 
-static void __attribute__((noreturn)) core1_entry(void) {
-    uint32_t read_idx = 0;
+// ---------------------------------------------------------------------------
+// Cutout decoding
+// ---------------------------------------------------------------------------
+static void decode_block(int blk, const uint16_t *w, uint64_t now)
+{
+    const uint16_t am = blk_a_mask[blk];
+    const uint16_t bm = blk_b_mask[blk];
+    const uint16_t m = am | bm;
+
+    uint8_t ch1[2];
+    int n1 = 0;
+    bool ch1_overflow = false;
+    uint32_t a_votes = 0, b_votes = 0;  // channel 1 current direction
+
+    int idle = 0;
+    bool armed = false;
+
+    for (int i = 0; i + BYTE_LAST_SAMPLE < WINDOW_SAMPLES; ) {
+        if (!(w[i] & m)) {
+            if (++idle >= MIN_IDLE_SAMPLES)
+                armed = true;
+            i++;
+            continue;
+        }
+        if (!armed) {
+            // Current with no idle before it, e.g. DCC load current still
+            // flowing at the start of the window.
+            idle = 0;
+            i++;
+            continue;
+        }
+
+        uint8_t raw;
+        byte_result_t r = read_byte(w, i, m, &raw);
+        if (r != BYTE_OK) {
+            if (r == BYTE_FRAMING)
+                stats.framing[blk]++;
+            armed = false;
+            idle = 0;
+            i++;
+            continue;
+        }
+
+        int t_us = WINDOW_START_US + i / SAMPLES_PER_US;
+        if (t_us >= CH2_START_MIN_US) {
+            stats.bytes[blk]++;
+            stats.ch2_bytes[blk]++;
+        } else if (t_us >= CH1_START_MIN_US) {
+            stats.bytes[blk]++;
+            if (n1 < 2)
+                ch1[n1++] = raw;
+            else
+                ch1_overflow = true;
+            for (int k = i; k < i + 9 * SAMPLES_PER_BIT; k++) {
+                if (w[k] & am) a_votes++;
+                if (w[k] & bm) b_votes++;
+            }
+        }
+
+        // The next start bit may follow the stop bit directly
+        i += BYTE_LAST_SAMPLE + 1;
+        idle = 0;
+    }
+
+    if (n1 == 0)
+        return;
+    if (n1 != 2 || ch1_overflow) {
+        stats.ch1_bad[blk]++;
+        return;
+    }
+
+    uint8_t v0 = decode_table[ch1[0]];
+    uint8_t v1 = decode_table[ch1[1]];
+    if (v0 >= 0x40 || v1 >= 0x40) {
+        stats.ch1_bad[blk]++;
+        return;
+    }
+    stats.ch1_ok[blk]++;
+
+    // Channel 1 carries one 12-bit datagram: 4-bit ID, 8 data bits
+    railcom_orient_t orient = a_votes > b_votes ? RAILCOM_ORIENT_A :
+                              b_votes > a_votes ? RAILCOM_ORIENT_B :
+                                                  RAILCOM_ORIENT_UNKNOWN;
+    handle_ch1(blk, v0 >> 2, (uint8_t)(((v0 & 0x03) << 6) | v1), orient, now);
+}
+
+static uint32_t dma_write_index(void)
+{
+    uintptr_t wa = (uintptr_t)dma_hw->ch[dma_chan].write_addr;
+    return ((wa - (uintptr_t)ring) / sizeof(uint16_t)) & RING_MASK;
+}
+
+static inline bool cutout_at(uint32_t idx)
+{
+    return (ring[idx & RING_MASK] & CUTOUT_MASK) != 0;
+}
+
+static void process_cutout(void)
+{
+    uint32_t t0 = time_us_32();
+    uint32_t newest = dma_write_index() - 1;
+
+    // Find the most recent CUTOUT_SIGNAL falling edge
+    uint32_t fall = 0;
+    bool found = false;
+    for (uint32_t n = 0; n < SEARCH_LIMIT; n++) {
+        uint32_t k = newest - n;
+        if (!cutout_at(k) && cutout_at(k - 1)) {
+            fall = k;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        stats.no_edge++;
+        return;
+    }
+
+    // Measure the high period that ends there
+    uint32_t high = 0;
+    while (high <= CUTOUT_MAX_US * SAMPLES_PER_US && cutout_at(fall - 1 - high))
+        high++;
+
+    uint32_t high_us = high / SAMPLES_PER_US;
+    if (high_us < stats.high_min_us) stats.high_min_us = high_us;
+    if (high_us > stats.high_max_us) stats.high_max_us = high_us;
+
+    if (high < CUTOUT_MIN_US * SAMPLES_PER_US) {
+        stats.short_high++;
+        return;
+    }
+    if (high > CUTOUT_MAX_US * SAMPLES_PER_US) {
+        stats.long_high++;
+        return;
+    }
+
+    // Copy the window out before DMA comes back around to it
+    uint32_t start = fall - WINDOW_OFFSET;
+    for (uint32_t i = 0; i < WINDOW_SAMPLES; i++)
+        window[i] = ring[(start + i) & RING_MASK];
+    if (time_us_32() - t0 > COPY_DEADLINE_US) {
+        stats.overruns++;
+        return;
+    }
+
+    stats.cutouts++;
+    uint64_t now = time_us_64();
+    last_cutout_us = now;
+
+#if RAILCOM_TRACE_BLOCK >= 0
+    uint32_t traced_bytes = stats.bytes[RAILCOM_TRACE_BLOCK];
+#endif
+
+    for (int blk = 0; blk < RAILCOM_MAX_CHANNELS; blk++)
+        decode_block(blk, window, now);
+
+#if RAILCOM_TRACE_BLOCK >= 0
+    // Keep the latest cutout with data on the traced block, or any cutout
+    // until one has data
+    if (!trace_ready || stats.bytes[RAILCOM_TRACE_BLOCK] != traced_bytes) {
+        memcpy(trace, window, sizeof(trace));
+        trace_ready = true;
+    }
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+#if RAILCOM_TRACE_BLOCK >= 0
+static void print_trace(void)
+{
+    static const struct { char name; uint16_t mask; } rows[] = {
+        { 'A', blk_a_mask[RAILCOM_TRACE_BLOCK] },
+        { 'B', blk_b_mask[RAILCOM_TRACE_BLOCK] },
+        { 'C', CUTOUT_MASK },
+    };
+    const int us_per_line = 100;
+    char line[us_per_line + 1];
+
+    DBG("RC T%d trace: 1 char/us, '1' = high, C = CUTOUT_SIGNAL\n", RAILCOM_TRACE_BLOCK + 1);
+    for (int off = 0; off < WINDOW_SAMPLES; off += us_per_line * SAMPLES_PER_US) {
+        for (size_t r = 0; r < sizeof(rows) / sizeof(rows[0]); r++) {
+            int len = 0;
+            for (int k = off; k + 1 < WINDOW_SAMPLES && len < us_per_line; k += SAMPLES_PER_US)
+                line[len++] = ((trace[k] | trace[k + 1]) & rows[r].mask) ? '1' : '.';
+            line[len] = '\0';
+            DBG("  %3dus %c %s\n", WINDOW_START_US + off / SAMPLES_PER_US, rows[r].name, line);
+        }
+    }
+    trace_ready = false;
+}
+#endif
+
+static void print_diag(void)
+{
+    static const char *const type_name[] = { "short", "long", "consist" };
+    static const char *const orient_name[] = { "?", "A", "B" };
+
+    DBG("RC: edges=%lu cutouts=%lu short=%lu long=%lu noedge=%lu overrun=%lu",
+        (unsigned long)stats.edges, (unsigned long)stats.cutouts,
+        (unsigned long)stats.short_high, (unsigned long)stats.long_high,
+        (unsigned long)stats.no_edge, (unsigned long)stats.overruns);
+    if (stats.high_max_us)
+        DBG(" high=%lu-%luus", (unsigned long)stats.high_min_us, (unsigned long)stats.high_max_us);
+    DBG("\n");
+    stats.high_min_us = UINT32_MAX;
+    stats.high_max_us = 0;
+
+    for (int blk = 0; blk < RAILCOM_MAX_CHANNELS; blk++) {
+        const railcom_data_t *d = &blocks[blk].reported;
+        DBG("RC T%d: bytes=%lu ferr=%lu ch1=%lu/%lu bad ch2=%lu adrbad=%lu",
+            blk + 1, (unsigned long)stats.bytes[blk], (unsigned long)stats.framing[blk],
+            (unsigned long)stats.ch1_ok[blk], (unsigned long)stats.ch1_bad[blk],
+            (unsigned long)stats.ch2_bytes[blk], (unsigned long)stats.addr_bad[blk]);
+        if (d->occupied)
+            DBG(" loco=%u (%s, %s)", d->address, type_name[d->addr_type],
+                orient_name[d->orientation]);
+        DBG("\n");
+    }
+
+#if RAILCOM_TRACE_BLOCK >= 0
+    if (trace_ready)
+        print_trace();
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Task
+// ---------------------------------------------------------------------------
+static void housekeeping(void)
+{
+    uint64_t now = time_us_64();
+
+    bool signal = last_cutout_us != 0 && now - last_cutout_us < SIGNAL_TIMEOUT_US;
+    if (signal != signal_active) {
+        signal_active = signal;
+        DBG("RailCom: cutouts %s\n", signal ? "detected" : "lost");
+        for (int blk = 0; blk < RAILCOM_MAX_CHANNELS; blk++)
+            railcom_on_signal(blk, signal);
+    }
+
+    for (int blk = 0; blk < RAILCOM_MAX_CHANNELS; blk++) {
+        rc_block_t *b = &blocks[blk];
+        if (b->reported.occupied &&
+            (!signal || now - b->last_adr_us > ADDR_TIMEOUT_US)) {
+            b->reported.occupied = false;
+            b->candidate_count = 0;
+            b->high_us = 0;
+            b->low_us = 0;
+            railcom_on_data(blk, &b->reported);
+        }
+    }
+
+    static uint64_t next_diag;
+    if (now >= next_diag) {
+        next_diag = now + DIAG_PERIOD_US;
+        print_diag();
+    }
+}
+
+static void cutout_irq_handler(void)
+{
+    if (!(gpio_get_irq_event_mask(RC_CUTOUT_PIN) & GPIO_IRQ_EDGE_FALL))
+        return;
+    gpio_acknowledge_irq(RC_CUTOUT_PIN, GPIO_IRQ_EDGE_FALL);
+
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR(rc_task, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+
+void railcom_task(void *param)
+{
+    (void)param;
+
+    rc_task = xTaskGetCurrentTaskHandle();
+    gpio_add_raw_irq_handler(RC_CUTOUT_PIN, cutout_irq_handler);
+    gpio_set_irq_enabled(RC_CUTOUT_PIN, GPIO_IRQ_EDGE_FALL, true);
+    irq_set_enabled(IO_IRQ_BANK0, true);
 
     for (;;) {
-        // Check for DMA restart (happens every ~143 min)
-        if (dma_restarted) {
-            dma_restarted = false;
-            read_idx = 0;
-            for (int ch = 0; ch < RAILCOM_MAX_CHANNELS; ch++) {
-                decoders[ch].in_cutout = false;
-                decoders[ch].silence_count = 0;
-            }
+        uint32_t edges = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(HOUSEKEEPING_MS));
+        if (edges) {
+            stats.edges += edges;
+            process_cutout();
         }
-
-        // How far has DMA written?
-        uint32_t write_idx =
-            ((uintptr_t)dma_hw->ch[dma_chan].write_addr -
-             (uintptr_t)ring_buf) / sizeof(uint32_t);
-        write_idx &= RING_MASK;
-
-        // Process new words
-        while (read_idx != write_idx) {
-            uint32_t word = ring_buf[read_idx];
-            // With shift_right, little-endian ARM byte order is chronological:
-            //   byte[0] = oldest sample, byte[3] = newest
-            uint8_t *s = (uint8_t *)&word;
-            process_sample(s[0]);
-            process_sample(s[1]);
-            process_sample(s[2]);
-            process_sample(s[3]);
-            read_idx = (read_idx + 1) & RING_MASK;
-        }
-
-        tight_loop_contents();
+        housekeeping();
     }
 }
 
 // ---------------------------------------------------------------------------
-// DMA restart ISR (runs on core 0)
+// Init
 // ---------------------------------------------------------------------------
-static void dma_irq_handler(void) {
-    dma_hw->ints0 = 1u << dma_chan;
-    dma_restarted = true;
-    __dmb();
-    dma_channel_set_write_addr(dma_chan, ring_buf, false);
-    dma_channel_set_trans_count(dma_chan, DMA_XFER_COUNT, true);
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-void railcom_init(void) {
-    const uint8_t pins[] = {
+void railcom_init(void)
+{
+    static const uint8_t pins[] = {
         RC_CH1_A, RC_CH1_B, RC_CH2_A, RC_CH2_B,
         RC_CH3_A, RC_CH3_B, RC_CH4_A, RC_CH4_B,
+        RC_CUTOUT_PIN,
     };
 
-    // PIO setup (use PIO1; PIO0 is reserved for CAN2040)
-    sample_pio = pio1;
-    uint offset = pio_add_program(sample_pio, &railcom_sample_program);
-    sample_sm = pio_claim_unused_sm(sample_pio, true);
-    railcom_sample_program_init(sample_pio, sample_sm, offset, RC_CH1_A);
-
-    // Configure GPIO pins AFTER PIO init — ensure input enable and pull-ups are active
-    for (int i = 0; i < 8; i++) {
+    // ISO7720 outputs are push-pull and CUTOUT_SIGNAL has its own pull-up (R36)
+    for (size_t i = 0; i < sizeof(pins); i++) {
         gpio_init(pins[i]);
         gpio_set_dir(pins[i], GPIO_IN);
-        gpio_pull_up(pins[i]);
-        gpio_set_input_enabled(pins[i], true);
+        gpio_disable_pulls(pins[i]);
     }
 
-    // DMA setup: PIO RX FIFO -> ring buffer
+    // PIO0 (PIO1 belongs to can2040)
+    sample_pio = pio0;
+    uint offset = pio_add_program(sample_pio, &railcom_sample_program);
+    sample_sm = pio_claim_unused_sm(sample_pio, true);
+    railcom_sample_program_init(sample_pio, sample_sm, offset, RC_SAMPLE_BASE_PIN);
+
+    // DMA: PIO RX FIFO -> ring buffer, endlessly
     dma_chan = dma_claim_unused_channel(true);
-    dma_cfg = dma_channel_get_default_config(dma_chan);
-    channel_config_set_transfer_data_size(&dma_cfg, DMA_SIZE_32);
-    channel_config_set_read_increment(&dma_cfg, false);
-    channel_config_set_write_increment(&dma_cfg, true);
-    channel_config_set_ring(&dma_cfg, true, RING_BITS);
-    channel_config_set_dreq(&dma_cfg, pio_get_dreq(sample_pio, sample_sm, false));
+    dma_channel_config cfg = dma_channel_get_default_config(dma_chan);
+    channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+    channel_config_set_read_increment(&cfg, false);
+    channel_config_set_write_increment(&cfg, true);
+    channel_config_set_ring(&cfg, true, RING_BITS);
+    channel_config_set_dreq(&cfg, pio_get_dreq(sample_pio, sample_sm, false));
+    dma_channel_configure(dma_chan, &cfg, ring, &sample_pio->rxf[sample_sm],
+                          dma_encode_endless_transfer_count(), true);
 
-    dma_channel_configure(dma_chan, &dma_cfg,
-        ring_buf,                              // write addr
-        &sample_pio->rxf[sample_sm],           // read addr (PIO RX FIFO)
-        DMA_XFER_COUNT,                        // transfer count
-        true);                                 // start now
-
-    // DMA completion interrupt (for restart after ~143 min)
-    dma_channel_set_irq0_enabled(dma_chan, true);
-    irq_set_exclusive_handler(DMA_IRQ_0, dma_irq_handler);
-    irq_set_enabled(DMA_IRQ_0, true);
-
-    // Start PIO sampling (DMA is already draining)
     pio_sm_set_enabled(sample_pio, sample_sm, true);
 
-    // Init decoder and channel state
-    memset(decoders, 0, sizeof(decoders));
-    memset(channels, 0, sizeof(channels));
-    for (int i = 0; i < RAILCOM_MAX_CHANNELS; i++) {
-        channels[i].last_valid_cutout = get_absolute_time();
-        railcom_on_signal(i, false);
-    }
+    memset(blocks, 0, sizeof(blocks));
+    for (int blk = 0; blk < RAILCOM_MAX_CHANNELS; blk++)
+        railcom_on_signal(blk, false);
 
-    // Launch core 1 for sample processing
-    multicore_launch_core1(core1_entry);
-
-    DBG("RailCom: PIO sampler at 2MHz, core 1 decode active\n");
-}
-
-void railcom_run(void) {
-    absolute_time_t now = get_absolute_time();
-
-    // One-shot confirmation that main loop is running
-    static bool first_run = true;
-    if (first_run) {
-        first_run = false;
-        DBG("RailCom: railcom_run() entered - main loop OK\n");
-    }
-
-    // Periodic diagnostics every 2 seconds
-    static absolute_time_t next_diag;
-    if (absolute_time_diff_us(next_diag, now) > 0) {
-        next_diag = make_timeout_time_ms(2000);
-        // Direct GPIO read bypassing PIO/DMA — shows actual pin state right now
-        uint32_t gpio_all = sio_hw->gpio_in;
-        uint8_t rc_pins = (gpio_all >> RC_CH1_A) & 0xFF;
-
-        // Raw word from ring buffer near DMA write pointer
-        uint32_t wr = ((uintptr_t)dma_hw->ch[dma_chan].write_addr -
-                       (uintptr_t)ring_buf) / sizeof(uint32_t);
-        wr &= RING_MASK;
-        uint32_t raw_word = ring_buf[(wr - 1) & RING_MASK];
-
-        DBG("RC: samples=%u cutouts=%u/%u/%u/%u gpio=0x%02X raw=0x%08X\n",
-            rc_diag.total_samples,
-            rc_diag.cutouts_detected[0], rc_diag.cutouts_detected[1],
-            rc_diag.cutouts_detected[2], rc_diag.cutouts_detected[3],
-            rc_pins, raw_word);
-
-        if (rc_diag.trace_ready) {
-            // Cutout-gated trace from core 1
-            uint16_t len = rc_diag.trace_len;
-            DBG("RC Ch0 cutout (%u samp, |=8samp/1bit):\n", len);
-            for (uint16_t off = 0; off < len; off += TRACE_LINE_SAMPLES) {
-                uint16_t end = off + TRACE_LINE_SAMPLES;
-                if (end > len) end = len;
-                DBG("  [%3u] A: ", off);
-                for (uint16_t t = off; t < end; t++) {
-                    DBG("%c", (rc_diag.trace_a[t / 8] & (1u << (t % 8))) ? '1' : '0');
-                    if ((t + 1) % 8 == 0 && t + 1 < end) DBG("|");
-                }
-                DBG("\n");
-                DBG("        B: ");
-                for (uint16_t t = off; t < end; t++) {
-                    DBG("%c", (rc_diag.trace_b[t / 8] & (1u << (t % 8))) ? '1' : '0');
-                    if ((t + 1) % 8 == 0 && t + 1 < end) DBG("|");
-                }
-                DBG("\n");
-            }
-            memset((void *)rc_diag.trace_a, 0, TRACE_BYTES);
-            memset((void *)rc_diag.trace_b, 0, TRACE_BYTES);
-            __dmb();
-            rc_diag.trace_ready = false;
-        } else {
-            // No cutout — snapshot DMA ring buffer for raw pin visibility
-            uint32_t write_idx =
-                ((uintptr_t)dma_hw->ch[dma_chan].write_addr -
-                 (uintptr_t)ring_buf) / sizeof(uint32_t);
-            write_idx &= RING_MASK;
-            uint32_t start_idx = (write_idx - TRACE_MAX_SAMPLES / 4) & RING_MASK;
-            uint16_t len = TRACE_MAX_SAMPLES;
-
-            DBG("RC Ch0 raw (%u samp, |=8samp/1bit):\n", len);
-            for (uint16_t off = 0; off < len; off += TRACE_LINE_SAMPLES) {
-                uint16_t end = off + TRACE_LINE_SAMPLES;
-                if (end > len) end = len;
-                DBG("  [%3u] A: ", off);
-                for (uint16_t t = off; t < end; t++) {
-                    uint32_t word = ring_buf[(start_idx + t / 4) & RING_MASK];
-                    uint8_t s = ((uint8_t *)&word)[t % 4];
-                    DBG("%c", (s & 0x01) ? '1' : '0');
-                    if ((t + 1) % 8 == 0 && t + 1 < end) DBG("|");
-                }
-                DBG("\n");
-                DBG("        B: ");
-                for (uint16_t t = off; t < end; t++) {
-                    uint32_t word = ring_buf[(start_idx + t / 4) & RING_MASK];
-                    uint8_t s = ((uint8_t *)&word)[t % 4];
-                    DBG("%c", (s & 0x02) ? '1' : '0');
-                    if ((t + 1) % 8 == 0 && t + 1 < end) DBG("|");
-                }
-                DBG("\n");
-            }
-        }
-    }
-
-    for (int i = 0; i < RAILCOM_MAX_CHANNELS; i++) {
-        rc_channel_t *ch = &channels[i];
-
-        if (cutout_flag[i]) {
-            __dmb();
-            cutout_flag[i] = false;
-
-            ch->last_valid_cutout = now;
-            if (!ch->signal_active) {
-                ch->signal_active = true;
-                railcom_on_signal(i, true);
-            }
-
-            // Check NAND result (Orientation 1)
-            if (result_valid_nand[i]) {
-                uint16_t addr = result_addr_nand[i];
-                if (addr != ch->last_nand.address || !ch->last_nand.occupied) {
-                    ch->last_nand.address = addr;
-                    ch->last_nand.occupied = true;
-                    ch->last_nand_valid = true;
-                    railcom_on_data(i, &ch->last_nand);
-                    DBG("RailCom Ch%d/NAND: Addr %d (Pos)\n", i, addr);
-                }
-            }
-
-            // Check OR result (Orientation 2)
-            if (result_valid_or[i]) {
-                uint16_t addr = result_addr_or[i];
-                if (addr != ch->last_or.address || !ch->last_or.occupied) {
-                    ch->last_or.address = addr;
-                    ch->last_or.occupied = true;
-                    ch->last_nand_valid = false;
-                    railcom_on_data(i, &ch->last_or);
-                    DBG("RailCom Ch%d/OR: Addr %d (Neg)\n", i, addr);
-                }
-            }
-        }
-
-        // Signal loss: no cutout for >500ms
-        if (ch->signal_active &&
-            absolute_time_diff_us(ch->last_valid_cutout, now) > 500000) {
-            ch->signal_active = false;
-            ch->last_nand.occupied = false;
-            ch->last_nand.address = 0;
-            ch->last_or.occupied = false;
-            ch->last_or.address = 0;
-            railcom_on_signal(i, false);
-        }
-    }
+    DBG("RailCom: sampling GPIO %d-%d at 2 MHz, cutout on GPIO %d\n",
+        RC_SAMPLE_BASE_PIN, RC_SAMPLE_BASE_PIN + 15, RC_CUTOUT_PIN);
 }

@@ -4,7 +4,7 @@
 #include "hardware/clocks.h"
 #include "util/dbg.h"
 
-#define TICK_MS  20  /* servo_tick() called every 20ms */
+#define TICK_MS  SERVO_TICK_MS
 
 static const uint8_t servo_pins[SERVO_COUNT] = {SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN};
 
@@ -14,6 +14,8 @@ static struct {
     uint16_t target;        /* Target position */
     uint16_t step;          /* Position increment per tick */
     uint16_t hold_ticks;    /* Ticks remaining before cutting PWM */
+    uint16_t midpoint;      /* Polarity flip point */
+    uint8_t  frog_pin;      /* GPIO (4-7) for relay control, 0 for none */
     bool     moving;        /* True while interpolating toward target */
     bool     holding;       /* True while in post-movement hold period */
     bool     active;        /* True if PWM is outputting a signal */
@@ -30,6 +32,14 @@ void servo_init(void) {
     float div = (float)sys_hz / 1000000.0f;
     DBG("servo_init: clk_sys=%lu Hz, pwm div=%.1f\n", (unsigned long)sys_hz, (double)div);
 
+    /* Setup GP outputs for frog relays */
+    uint8_t gp_outputs[] = {GPIO_OUT1, GPIO_OUT2, GPIO_OUT3, GPIO_OUT4};
+    for (int i = 0; i < 4; i++) {
+        gpio_init(gp_outputs[i]);
+        gpio_set_dir(gp_outputs[i], GPIO_OUT);
+        gpio_put(gp_outputs[i], 0);
+    }
+
     for (int i = 0; i < SERVO_COUNT; i++) {
         gpio_set_function(servo_pins[i], GPIO_FUNC_PWM);
         uint slice_num = pwm_gpio_to_slice_num(servo_pins[i]);
@@ -44,6 +54,8 @@ void servo_init(void) {
         servo_state[i].target = 0;
         servo_state[i].step = 0;
         servo_state[i].hold_ticks = 0;
+        servo_state[i].midpoint = 0;
+        servo_state[i].frog_pin = 0;
         servo_state[i].moving = false;
         servo_state[i].holding = false;
         servo_state[i].active = false;
@@ -80,11 +92,13 @@ void servo_set_pulse_us(int index, uint16_t us) {
     servo_state[index].active = true;
 }
 
-void servo_set_target(int index, uint16_t target, uint8_t throw_time, uint8_t hold_time) {
+void servo_set_target(int index, uint16_t target, uint8_t throw_time, uint8_t hold_time, uint8_t frog_pin, uint16_t midpoint) {
     if (index < 0 || index >= SERVO_COUNT) return;
 
     servo_state[index].target = target;
     servo_state[index].active = true;
+    servo_state[index].frog_pin = frog_pin;
+    servo_state[index].midpoint = midpoint;
 
     /* Calculate hold ticks: hold_time is in seconds, tick is 20ms */
     if (hold_time > 0)
@@ -99,6 +113,12 @@ void servo_set_target(int index, uint16_t target, uint8_t throw_time, uint8_t ho
         servo_state[index].moving = false;
         servo_state[index].step = 0;
         servo_apply_position(index, target);
+
+        /* Update frog polarity instantly if configured */
+        if (frog_pin > 0 && frog_pin <= 4) {
+            uint8_t pins[] = {GPIO_OUT1, GPIO_OUT2, GPIO_OUT3, GPIO_OUT4};
+            gpio_put(pins[frog_pin - 1], (target >= midpoint));
+        }
         return;
     }
 
@@ -145,7 +165,8 @@ uint8_t servo_tick(void) {
         if (!servo_state[i].moving)
             continue;
 
-        uint16_t cur = servo_state[i].current;
+        uint16_t prev = servo_state[i].current;
+        uint16_t cur = prev;
         uint16_t tgt = servo_state[i].target;
         uint16_t step = servo_state[i].step;
 
@@ -159,6 +180,19 @@ uint8_t servo_tick(void) {
 
         servo_state[i].current = cur;
         servo_apply_position(i, cur);
+
+        /* Flip frog polarity if crossing midpoint during interpolation */
+        uint8_t frog = servo_state[i].frog_pin;
+        uint16_t mid = servo_state[i].midpoint;
+        if (frog > 0 && frog <= 4) {
+            uint8_t pins[] = {GPIO_OUT1, GPIO_OUT2, GPIO_OUT3, GPIO_OUT4};
+            uint8_t pin = pins[frog - 1];
+            bool prev_side = (prev >= mid);
+            bool cur_side = (cur >= mid);
+            if (prev_side != cur_side || cur == mid) {
+                gpio_put(pin, cur_side);
+            }
+        }
 
         if (cur == tgt) {
             servo_state[i].moving = false;
@@ -178,4 +212,12 @@ uint8_t servo_tick(void) {
 bool servo_is_moving(int index) {
     if (index < 0 || index >= SERVO_COUNT) return false;
     return servo_state[index].moving;
+}
+
+bool servo_busy(void) {
+    for (int i = 0; i < SERVO_COUNT; i++) {
+        if (servo_state[i].moving || servo_state[i].holding)
+            return true;
+    }
+    return false;
 }

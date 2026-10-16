@@ -18,6 +18,11 @@
 #define GPIO_OUT3 6
 #define GPIO_OUT4 7
 
+#define GPIO_IN1 8
+#define GPIO_IN2 9
+#define GPIO_IN3 10
+#define GPIO_IN4 11
+
 // Servo PWM Outputs
 #define SERVO1_PIN 12
 #define SERVO2_PIN 13
@@ -25,6 +30,8 @@
 #define SERVO4_PIN 15
 
 // RailCom Detector Channels (A and B for Data/Orientation)
+// Channel n is the TRACK_Rn block. A is high while current flows from the
+// rail into BOOSTER_R, B while it flows the other way; both low when idle.
 #define RC_CH1_A 17
 #define RC_CH1_B 18
 #define RC_CH2_A 19
@@ -33,6 +40,13 @@
 #define RC_CH3_B 22
 #define RC_CH4_A 23
 #define RC_CH4_B 24
+
+// RailCom cutout: high while the booster holds the cutout (U15 opto)
+#define RC_CUTOUT_PIN 29
+
+// The RailCom PIO samples 16 consecutive GPIOs starting here; all RC_* pins
+// must fall within that range.
+#define RC_SAMPLE_BASE_PIN 17
 
 // Board identify LED
 #ifndef PICO_DEFAULT_LED_PIN

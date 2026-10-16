@@ -3,7 +3,7 @@
 
 BUILD_DIR ?= build
 
-.PHONY: all clean flash
+.PHONY: all clean flash test
 
 all: $(BUILD_DIR)/CMakeCache.txt
 	@ninja -C $(BUILD_DIR)
@@ -17,3 +17,8 @@ clean:
 
 flash: all
 	@picotool load -x $(BUILD_DIR)/canbus-outpost.elf
+
+# Host-side tests (LCC library and application code); no hardware needed
+test:
+	@$(MAKE) --no-print-directory -C lib/lcc/test
+	@$(MAKE) --no-print-directory -C test

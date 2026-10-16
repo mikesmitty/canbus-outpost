@@ -36,19 +36,28 @@ project(canbus-outpost C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+# LCC protocol library (plain C, host-testable)
+add_subdirectory(lib/lcc)
+
 # Add executable
 add_executable(canbus-outpost
     canbus-outpost.c
     src/can2040.c
+    src/can_bus.c
+    src/lcc_task.c
+    src/node_id.c
+    src/nv_storage.c
     src/railcom.c
     src/servo.c
-    src/nv_storage.c
-    src/identify_led.c
-    src/lcc.c
-    src/lcc_memconfig.c
-    src/cdi_data.c
-    src/gridconnect.c
+    src/usb_gridconnect.c
     src/util/dbg.c
+    src/app/app.c
+    src/app/cdi_data.c
+    src/app/config.c
+    src/app/identify.c
+    src/app/inputs.c
+    src/app/railcom_app.c
+    src/app/turnouts.c
 )
 
 # x-release-please-start-version
@@ -77,7 +86,6 @@ pico_set_program_name(canbus-outpost "canbus-outpost")
 pico_set_program_version(canbus-outpost "${GIT_VERSION}")
 
 # Generate PIO headers
-pico_generate_pio_header(canbus-outpost ${CMAKE_CURRENT_LIST_DIR}/blink.pio)
 pico_generate_pio_header(canbus-outpost ${CMAKE_CURRENT_LIST_DIR}/src/railcom_sample.pio)
 
 # USB CDC for serial I/O, disable UART stdio, enable RTT for debug
@@ -101,7 +109,8 @@ target_link_libraries(canbus-outpost
         hardware_flash
         pico_flash
         pico_unique_id
-        pico_multicore
+        hardware_watchdog
+        lcc
         FreeRTOS-Kernel
         FreeRTOS-Kernel-Heap4
 )

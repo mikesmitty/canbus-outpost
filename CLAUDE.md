@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-canbus-outpost is a Raspberry Pi Pico 2 (RP2350) firmware and hardware project for model railroad control. It provides CAN bus connectivity, RailCom detection, servo control, and GPIO.
+canbus-outpost is a Raspberry Pi Pico 2 (RP2350) firmware and hardware project for model railroad control. It is an LCC (OpenLCB) node that drives servo switch machines and detects RailCom decoders, with a USB GridConnect bridge to a host.
 
 ## Build Commands
 
@@ -17,37 +17,57 @@ make clean
 
 # Build and flash to connected Pico 2 via picotool
 make flash
+
+# Host-side tests: LCC library, CDI/config layout, RailCom decoder
+make test
 ```
 
-The build system uses CMake 3.13+ generating Ninja build files. The Pico SDK (v2.2.0) is expected at `~/.pico-sdk/sdk/2.2.0/`. The toolchain is `arm-none-eabi-gcc` from the Pico Toolchain.
+The build system uses CMake 3.13+ generating Ninja build files. The Pico SDK (v2.2.0) is expected at `~/.pico-sdk/sdk/2.2.0/`, and FreeRTOS-Kernel at the path in `FREERTOS_KERNEL_PATH`. The toolchain is `arm-none-eabi-gcc` from the Pico Toolchain.
 
-Build artifacts go to `firmware/canbus-outpost/build/` (`.elf` and `.uf2` files).
+Build artifacts go to `build/` (`.elf` and `.uf2` files).
 
-There is no test suite — verification is manual (UART debug, physical hardware testing).
+`make test` builds and runs the host tests with the system C compiler; hardware behavior is verified manually (RTT log, bench testing).
 
 ## Architecture
 
-### Firmware (`firmware/canbus-outpost/`)
+The firmware runs FreeRTOS on core 0 of the RP2350. The entry point is `canbus-outpost.c`.
 
-The main entry point is `canbus-outpost.cpp`. Application code is in `src/`. The firmware runs bare-metal on the RP2350 (no RTOS). There is currently no protocol stack — only hardware drivers.
+### LCC library (`lib/lcc/`)
 
-**Core drivers:**
-- **can2040** (`src/can2040.c/h`): PIO-based software CAN bus driver. Handles bit-level CAN protocol via RP2350 Programmable I/O state machines.
-- **railcom** (`src/railcom.c/h`): 4-channel RailCom detector using PIO UART receivers at 250kbps. Uses cutout-based gating for DCC synchronization. The PIO program is in `src/railcom_sample.pio`.
-- **servo** (`src/servo.c/h`): 4-channel PWM servo output at 50Hz.
-- **nv_storage** (`src/nv_storage.c/h`): Persistent configuration in the last flash sector.
+Custom OpenLCB/LCC implementation in plain C11 with no SDK or RTOS calls: frames go out through a send hook and time comes in as a millisecond counter, so it builds and is tested on the host (`lib/lcc/test/`). It covers alias allocation and conflict handling, Verify Node ID, Protocol Support, SNIP, an event producer/consumer registry, datagrams (reassembly, rejection, resend), memory configuration and GridConnect framing. Public headers are in `lib/lcc/include/lcc/`.
+
+### Tasks
+
+- **lcc_task** (`src/lcc_task.c`): owns the LCC library, the configuration and the application state. Other tasks and interrupts hand it work through its queue (`lcc_task_post_frame`, `lcc_task_call`). It also feeds the hardware watchdog.
+- **can_bus_task** (`src/can_bus.c`): can2040 on PIO1. Received frames go to the LCC task and the USB bridge.
+- **usb_gc_rx_task / usb_gc_tx_task** (`src/usb_gridconnect.c`): GridConnect over USB CDC, plus console commands (`nodeid`).
+- **railcom_task** (`src/railcom.c`): woken by the CUTOUT_SIGNAL falling edge (GPIO 29); decodes that cutout from the 2 MHz PIO/DMA sample ring (`src/railcom_sample.pio`) for all four blocks (UART line = !(A || B)).
+
+Work is event-driven (queues, task notifications, FreeRTOS timers, GPIO interrupts); avoid polling loops.
+
+### Application (`src/app/`)
+
+- **config** (`config_layout.h`, `config.c`): the LCC configuration space as a byte image in OpenLCB byte order (big-endian). `config_layout_t` must match the CDI in `cdi_data.c`; `make test` checks it.
+- **turnouts**: servo switch machines (throw/close/center events, feedback, frog output, fascia toggle).
+- **identify**, **inputs** (debounced fascia buttons), **railcom_app** (RailCom reports into the LCC task).
+
+### Drivers and storage
+
+- **can2040** (`src/can2040.c/h`): PIO-based software CAN controller (third party).
+- **servo** (`src/servo.c/h`): 4-channel PWM servo output at 50 Hz with timed motion.
+- **nv_storage** (`src/nv_storage.c/h`): power-safe records (two sectors each, CRC) at the top of flash, for the configuration and the node ID.
+- **node_id** (`src/node_id.c/h`): the LCC node ID, set per board with the `nodeid` USB command; falls back to one derived from the chip serial number.
 
 **Pin assignments** are defined in `src/board.h`.
 
 ### PIO Programs
 
 PIO programs must be `.pio` assembly files (not inline C). They are compiled by `pioasm` as part of the CMake build. Current PIO programs:
-- `blink.pio` — heartbeat LED
-- `src/railcom_uart.pio` — RailCom UART receiver (10 cycles/bit, middle-bit sampling)
+- `src/railcom_sample.pio` — RailCom sampler (16 GPIOs at 2 MHz, DMA to a ring buffer)
 
 ### Hardware (`hardware/canbus-outpost/`)
 
-KiCad 6+ design files. Key components: RP2350, TLV3202 comparator (RailCom signal detection), RJ45 CAN bus connector. Manufacturing outputs (gerbers, BOM, pick-and-place) are in `production/`.
+KiCad design files. Key components: RP2350, TLV3202 window comparators and ISO7720 isolators (RailCom detection), RJ45 CAN bus connector. Manufacturing outputs (gerbers, BOM, pick-and-place) are in `production/`. `canbus-outpost.kicad_dru` holds the track-to-logic isolation clearance rule.
 
 ### Planning Docs (`conductor/`)
 
@@ -57,6 +77,6 @@ Phase documents tracking project evolution. `phase-1.md` has the most current MV
 
 - **Language**: C11, compiled with `arm-none-eabi-gcc`
 - **Commit messages**: Conventional commit format (`feat:`, `fix:`, `chore:`, etc.)
-- **USB stdio**: Enabled (UART stdio disabled). USB CDC enumeration timeout is 2 seconds.
-- **Debug output**: RTT (Real-Time Transfer) is enabled. Debug UART on pins 0/1 at 115200 baud.
+- **USB stdio**: Enabled (UART stdio disabled), used only for GridConnect and console output. USB CDC enumeration timeout is 2 seconds.
+- **Debug output**: `DBG()` writes to RTT; RTT is removed from stdio at startup so GridConnect traffic stays off it.
 - **CMake target board**: `pico2` (RP2350)
