@@ -1,0 +1,62 @@
+name: Set up Pico build
+description: >
+  Installs the Arm toolchain, Pico SDK and FreeRTOS-Kernel at the versions
+  the firmware is built with locally. The SDK and toolchain versions are read
+  from CMakeLists.txt (sdkVersion, toolchainVersion).
+
+inputs:
+  freertos-ref:
+    description: FreeRTOS-Kernel commit (the local ~/git/FreeRTOS-Kernel checkout)
+    default: fcc665325c033065cb6fd89d18a92f2ca611495e
+
+runs:
+  using: composite
+  steps:
+    - name: Read versions
+      id: versions
+      shell: bash
+      run: |
+        sdk=$(sed -n 's/^set(sdkVersion \(.*\))$/\1/p' CMakeLists.txt)
+        toolchain=$(sed -n 's/^set(toolchainVersion \(.*\))$/\1/p' CMakeLists.txt)
+        if [ -z "$sdk" ] || [ -z "$toolchain" ]; then
+          echo "::error::sdkVersion or toolchainVersion not found in CMakeLists.txt"
+          exit 1
+        fi
+        echo "sdk=$sdk" >> "$GITHUB_OUTPUT"
+        echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+        # 14_2_Rel1 -> 14.2.rel1, as in the Arm download URL
+        echo "toolchain-url=$(echo "$toolchain" | tr _ . | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache toolchain and SDKs
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/pico
+        key: pico-${{ runner.os }}-${{ steps.versions.outputs.toolchain }}-sdk${{ steps.versions.outputs.sdk }}-freertos-${{ inputs.freertos-ref }}
+
+    - name: Download toolchain and SDKs
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SDK: ${{ steps.versions.outputs.sdk }}
+        TOOLCHAIN: ${{ steps.versions.outputs.toolchain-url }}
+        FREERTOS_REF: ${{ inputs.freertos-ref }}
+      run: |
+        mkdir -p ~/pico/toolchain
+        curl -fsSL "https://developer.arm.com/-/media/Files/downloads/gnu/${TOOLCHAIN}/binrel/arm-gnu-toolchain-${TOOLCHAIN}-x86_64-arm-none-eabi.tar.xz" \
+          | tar -xJ -C ~/pico/toolchain --strip-components=1
+
+        git clone --quiet --depth 1 --branch "$SDK" https://github.com/raspberrypi/pico-sdk.git ~/pico/pico-sdk
+        git -C ~/pico/pico-sdk submodule update --quiet --init --depth 1 lib/tinyusb
+
+        git init --quiet ~/pico/FreeRTOS-Kernel
+        git -C ~/pico/FreeRTOS-Kernel fetch --quiet --depth 1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git "$FREERTOS_REF"
+        git -C ~/pico/FreeRTOS-Kernel checkout --quiet FETCH_HEAD
+        git -C ~/pico/FreeRTOS-Kernel submodule update --quiet --init portable/ThirdParty/Community-Supported-Ports
+
+    - name: Set paths
+      shell: bash
+      run: |
+        echo "$HOME/pico/toolchain/bin" >> "$GITHUB_PATH"
+        echo "PICO_SDK_PATH=$HOME/pico/pico-sdk" >> "$GITHUB_ENV"
+        echo "FREERTOS_KERNEL_PATH=$HOME/pico/FreeRTOS-Kernel" >> "$GITHUB_ENV"
