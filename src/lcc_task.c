@@ -91,6 +91,7 @@ void lcc_task_init(uint64_t node_id)
             .config_update_complete = update_complete,
             .factory_reset = app_factory_reset,
             .reboot = reboot,
+            .duplicate_node_id = app_duplicate_node_id,
         },
     };
     lcc_init(&cfg);

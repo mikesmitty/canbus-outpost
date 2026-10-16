@@ -24,6 +24,10 @@ void app_factory_reset(void);
 // Another node asked about this one (blink the identify LED if enabled).
 void app_identify_requested(void);
 
+// Another node is using this node's ID: tell the user (log, USB console,
+// fast-blinking identify LED).
+void app_duplicate_node_id(void);
+
 // USB console commands
 void app_show_node_id(void);
 void app_set_node_id(uint64_t node_id);  // stores it and reboots

@@ -74,12 +74,22 @@ void app_identify_requested(void)
     identify_requested();
 }
 
+void app_duplicate_node_id(void)
+{
+    char id[18];
+    node_id_format(lcc_node_id(), id);
+    DBG("LCC: another node is using node ID %s\n", id);
+    usb_console_printf("WARNING: another node is using this node ID (%s); "
+                       "give one of them a new ID with the nodeid command\n", id);
+    identify_alert();
+}
+
 void app_show_node_id(void)
 {
     char id[18];
     node_id_format(lcc_node_id(), id);
     usb_console_printf("nodeid %s%s\n", id,
-                       id_assigned ? "" : " (temporary, from the chip serial number)");
+                       id_assigned ? "" : " (temporary, locally allocated from the chip ID)");
 }
 
 void app_set_node_id(uint64_t node_id)

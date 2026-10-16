@@ -15,4 +15,7 @@ void identify_apply(void);
 // Another node asked about this one: restart the timeout if blinking.
 void identify_requested(void);
 
+// Something the user must see (a duplicate node ID): blink fast until reboot.
+void identify_alert(void);
+
 #endif // IDENTIFY_H

@@ -6,6 +6,12 @@
 
 #define IDENTITY_VERSION 1
 
+// Stand-in IDs are locally allocated (Unique Identifiers Standard 5.12):
+// that range can't collide with any manufacturer's or assigned IDs, only
+// with another layout's own local allocations.
+#define LOCAL_ID_PREFIX  0x0A0000000000ULL
+#define LOCAL_ID_MASK    0x00FFFFFFFFFFULL
+
 uint64_t node_id_load(bool *assigned)
 {
     uint8_t buf[6];
@@ -21,11 +27,11 @@ uint64_t node_id_load(bool *assigned)
         }
     }
 
-    // Stand-in: low 6 bytes of the flash chip's unique ID
+    // Stand-in: the low 40 bits of the RP2350's device ID, locally allocated
     pico_unique_board_id_t board_id;
     pico_get_unique_board_id(&board_id);
     *assigned = false;
-    return lcc_get_be48(&board_id.id[2]);
+    return LOCAL_ID_PREFIX | (lcc_get_be48(&board_id.id[2]) & LOCAL_ID_MASK);
 }
 
 bool node_id_store(uint64_t node_id)
@@ -56,7 +62,9 @@ bool node_id_parse(const char *s, uint64_t *node_id)
             return false;
         id = (id << 4) | (uint64_t)v;
     }
-    if (digits != 12 || id == 0)
+    // The standard reserves IDs starting 00 and FF: never to be used
+    uint8_t top = (uint8_t)(id >> 40);
+    if (digits != 12 || top == 0x00 || top == 0xFF)
         return false;
     *node_id = id;
     return true;

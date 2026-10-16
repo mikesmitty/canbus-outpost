@@ -63,7 +63,7 @@ Work is event-driven (queues, task notifications, FreeRTOS timers, GPIO interrup
 - **servo** (`src/servo.c/h`): 4-channel PWM servo output at 50 Hz with timed motion.
 - **nv_storage** (`src/nv_storage.c/h`): power-safe records (two sectors each, CRC) in the top 16 KB of flash, outside the partitions, for the configuration and the node ID. Read through the untranslated XIP window, since a partition boot maps only that partition.
 - **firmware_update** (`src/firmware_update.c/h`, `src/fw_image.c/h`): LCC firmware upgrades into the A/B partitions of `partition_table.json`. Images are built try-before-you-buy with a SHA-256 hash: a new image runs on trial and confirms itself 5 s after the node comes up; if it resets before then, or hasn't confirmed within 60 s, the next boot returns to the previous one. Without a partition table the node doesn't offer upgrades. Loading firmware over SWD writes at the start of flash and replaces the partition table, so flash with picotool.
-- **node_id** (`src/node_id.c/h`): the LCC node ID, set per board with the `nodeid` USB command; falls back to one derived from the chip serial number.
+- **node_id** (`src/node_id.c/h`): the LCC node ID, set per board with the `nodeid` USB command from an OpenLCB-assigned range. Until then a locally-allocated stand-in (`0A` prefix, from the chip's device ID) is used, which can't clash with other vendors' IDs. The LCC library checks for another node with the same ID after joining the bus and reports one (well-known event, USB console, fast-blinking identify LED).
 
 **Pin assignments** are defined in `src/board.h`.
 

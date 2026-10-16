@@ -7,6 +7,9 @@
 #include "util/dbg.h"
 
 #define BLINK_MS 250
+#define ALERT_BLINK_MS 80
+
+static bool alert;  // fast blink until reboot, whatever the identify setting
 
 static TimerHandle_t blink_timer;
 static TimerHandle_t timeout_timer;
@@ -26,9 +29,11 @@ static void blink_cb(TimerHandle_t t)
 
 static void stop(void)
 {
+    xTimerStop(timeout_timer, 0);
+    if (alert)
+        return;
     // The timer task outranks the LCC task, so no blink runs after this
     xTimerStop(blink_timer, 0);
-    xTimerStop(timeout_timer, 0);
     led(false);
 }
 
@@ -83,6 +88,12 @@ void identify_apply(void)
     if (!xTimerIsTimerActive(blink_timer))
         xTimerStart(blink_timer, 0);
     restart_timeout();
+}
+
+void identify_alert(void)
+{
+    alert = true;
+    xTimerChangePeriod(blink_timer, pdMS_TO_TICKS(ALERT_BLINK_MS), 0);  // starts it too
 }
 
 void identify_requested(void)

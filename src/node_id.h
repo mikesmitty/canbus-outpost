@@ -4,11 +4,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// The node's LCC node ID. It must come from a range assigned by OpenLCB
+// The node's LCC node ID. It should come from a range assigned by OpenLCB
 // (free to request) and is stored once per board, separate from the
-// configuration so a factory reset keeps it. Until one is stored, an ID
-// derived from the chip's serial number stands in, which is not guaranteed
-// unique on a layout.
+// configuration so a factory reset keeps it. Until one is stored, a
+// locally-allocated ID (0A.xx.xx.xx.xx.xx) derived from the chip's device
+// ID stands in: it can't clash with other vendors' nodes, but isn't fit for
+// a board that moves between layouts.
 
 // Returns the stored ID, or the stand-in with *assigned = false.
 uint64_t node_id_load(bool *assigned);

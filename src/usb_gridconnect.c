@@ -88,7 +88,8 @@ static void handle_line(char *line)
         } else if (node_id_parse(arg, &pending_node_id)) {
             lcc_task_call(set_node_id, 0);
         } else {
-            usb_console_printf("nodeid: expected 12 hex digits, e.g. nodeid 05.01.01.01.12.34\n");
+            usb_console_printf("nodeid: expected 12 hex digits not starting 00 or FF, "
+                               "e.g. nodeid 05.01.01.01.12.34\n");
         }
     } else if (strcmp(line, "help") == 0) {
         usb_console_printf("commands: nodeid, nodeid <id>\n");
