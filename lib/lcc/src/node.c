@@ -1,6 +1,7 @@
 #include <string.h>
 #include "internal.h"
 #include "lcc/bytes.h"
+#include "lcc/events.h"
 #include "lcc/memconfig.h"
 
 /* CAN Frame Transfer Standard: wait at least 200 ms after the CID frames
@@ -25,6 +26,7 @@ static struct {
     uint32_t lfsr1, lfsr2;     /* alias generator state */
     uint32_t cid_deadline;
     bool conflict;             /* someone used or defended our alias while checking */
+    bool duplicate_reported;   /* another node has our ID */
 } node;
 
 /* ------------------------------------------------------------------ */
@@ -143,6 +145,9 @@ static void claim_alias(void)
     if (lcc_config.hooks.initialized)
         lcc_config.hooks.initialized();
     lcc_events_identify_all();
+
+    /* Only a node with the same ID answers this */
+    lcc_send_global(LCC_MTI_VERIFY_NODE_ID_GLOBAL, nid, 6);
 }
 
 /* Another node sent a frame with our alias as its source. */
@@ -229,6 +234,18 @@ static void send_snip(uint16_t dst)
         lcc_config.hooks.identify_requested();
 }
 
+/* Another node (under a different alias) announced our Node ID. Report it
+ * once: the other node may be doing the same. */
+static void check_duplicate(const uint8_t *data, uint8_t len)
+{
+    if (len < 6 || lcc_get_be48(data) != lcc_config.node_id || node.duplicate_reported)
+        return;
+    node.duplicate_reported = true;
+    lcc_event_send_id(LCC_EVENT_DUPLICATE_NODE_ID);
+    if (lcc_config.hooks.duplicate_node_id)
+        lcc_config.hooks.duplicate_node_id();
+}
+
 static void reject_interaction(uint16_t dst, uint16_t mti)
 {
     uint8_t buf[4];
@@ -283,6 +300,12 @@ static void handle_message(const lcc_frame_t *f, uint32_t now)
         if (len == 0 || (len >= 6 && lcc_get_be48(data) == lcc_config.node_id))
             send_verified();
         return;
+    case LCC_MTI_INITIALIZATION_COMPLETE:
+    case LCC_MTI_INITIALIZATION_COMPLETE_SIMPLE:
+    case LCC_MTI_VERIFIED_NODE_ID:
+    case LCC_MTI_VERIFIED_NODE_ID_SIMPLE:
+        check_duplicate(data, len);
+        return;
     default:
         lcc_events_handle(mti, data, len);
         return;
@@ -327,6 +350,8 @@ void lcc_frame_received(const lcc_frame_t *frame, uint32_t now_ms)
         return;
 
     if (control) {
+        if (lcc_control_field(frame->id) == LCC_CONTROL_AMD)
+            check_duplicate(frame->data, frame->dlc);
         if (lcc_control_field(frame->id) == LCC_CONTROL_AME &&
             (frame->dlc == 0 ||
              (frame->dlc >= 6 && lcc_get_be48(frame->data) == lcc_config.node_id))) {

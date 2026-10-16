@@ -31,6 +31,10 @@ typedef struct {
     void (*factory_reset)(void);
     /* Memory configuration: reboot now. */
     void (*reboot)(void);
+    /* Another node announced this node's ID (once per start). The library
+     * has sent the Duplicate Node ID Detected event; the application
+     * should show it to the user. */
+    void (*duplicate_node_id)(void);
 } lcc_hooks_t;
 
 typedef struct {

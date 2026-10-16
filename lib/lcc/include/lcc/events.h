@@ -14,6 +14,9 @@
 #define LCC_MAX_EVENTS  48
 #endif
 
+/* Well-known event: another node is using this node's ID */
+#define LCC_EVENT_DUPLICATE_NODE_ID  0x0101000000000201ULL
+
 #ifndef LCC_MAX_PRODUCER_RANGES
 #define LCC_MAX_PRODUCER_RANGES  4
 #endif

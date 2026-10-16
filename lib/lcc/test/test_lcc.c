@@ -23,6 +23,7 @@ static int failures, checks;
 static lcc_frame_t sent[512];
 static int nsent;
 static int initialized_calls, identify_calls, update_calls, factory_calls, reboot_calls;
+static int duplicate_calls;
 static uint32_t now;
 
 static bool hook_send(const lcc_frame_t *f) { if (nsent < 512) sent[nsent++] = *f; return true; }
@@ -31,6 +32,7 @@ static void hook_identify(void) { identify_calls++; }
 static void hook_update(void) { update_calls++; }
 static void hook_factory(void) { factory_calls++; }
 static void hook_reboot(void) { reboot_calls++; }
+static void hook_duplicate(void) { duplicate_calls++; }
 
 static char user_name[64] = "Yard throat";
 static char user_desc[64] = "East end";
@@ -39,6 +41,7 @@ static void setup(void)
 {
     nsent = 0;
     initialized_calls = identify_calls = update_calls = factory_calls = reboot_calls = 0;
+    duplicate_calls = 0;
     now = 1000;
     lcc_node_config_t cfg = {
         .node_id = NODE_ID,
@@ -49,6 +52,7 @@ static void setup(void)
             .send = hook_send, .initialized = hook_initialized,
             .identify_requested = hook_identify, .config_update_complete = hook_update,
             .factory_reset = hook_factory, .reboot = hook_reboot,
+            .duplicate_node_id = hook_duplicate,
         },
     };
     lcc_init(&cfg);
@@ -179,12 +183,14 @@ static void test_alias_allocation(void)
     CHECK(nsent == 4 && !lcc_is_initialized(), "claimed before 200 ms");
     advance(1);
     CHECK(lcc_is_initialized() && initialized_calls == 1, "not initialized after 200 ms");
-    CHECK(nsent == 7, "expected RID, AMD, Init Complete; got %d frames", nsent);
+    CHECK(nsent == 8, "expected RID, AMD, Init Complete, Verify Node ID; got %d frames", nsent);
     CHECK(sent[4].id == lcc_control_id(LCC_CONTROL_RID, 0, alias), "RID wrong: %08X", sent[4].id);
     CHECK(sent[5].id == lcc_control_id(LCC_CONTROL_AMD, 0, alias) && sent[5].dlc == 6 &&
           lcc_get_be48(sent[5].data) == NODE_ID, "AMD wrong");
     CHECK(mti_of(&sent[6]) == LCC_MTI_INITIALIZATION_COMPLETE &&
           lcc_get_be48(sent[6].data) == NODE_ID, "Init Complete wrong");
+    CHECK(mti_of(&sent[7]) == LCC_MTI_VERIFY_NODE_ID_GLOBAL && sent[7].dlc == 6 &&
+          lcc_get_be48(sent[7].data) == NODE_ID, "no check for a duplicate Node ID");
     CHECK(lcc_ms_until_next_timer(now) == LCC_NO_TIMER, "timer left armed");
 }
 
@@ -262,6 +268,46 @@ static void test_verify_node_id(void)
     rx_addressed(LCC_MTI_VERIFY_NODE_ID_ADDRESSED, OTHER, 0x555, NULL, 0);
     CHECK(nsent == 1, "answered verify addressed to another alias");
     CHECK(identify_calls == 3, "identify hook calls %d", identify_calls);
+}
+
+static bool duplicate_event_sent(void)
+{
+    for (int i = 0; i < nsent; i++)
+        if (!lcc_is_control_frame(sent[i].id) && mti_of(&sent[i]) == LCC_MTI_EVENT_REPORT &&
+            lcc_get_be64(sent[i].data) == LCC_EVENT_DUPLICATE_NODE_ID)
+            return true;
+    return false;
+}
+
+static void test_duplicate_node_id(void)
+{
+    uint8_t ours[6], other_id[6];
+    lcc_put_be48(ours, NODE_ID);
+    lcc_put_be48(other_id, NODE_ID + 1);
+
+    /* Another node answers our own Verify Node ID */
+    setup();
+    start_node();
+    rx_global(LCC_MTI_VERIFIED_NODE_ID, OTHER, other_id, 6);
+    CHECK(!duplicate_event_sent() && duplicate_calls == 0, "different ID taken for a duplicate");
+    rx_global(LCC_MTI_VERIFIED_NODE_ID, OTHER, ours, 6);
+    CHECK(duplicate_event_sent() && duplicate_calls == 1, "duplicate not reported");
+    nsent = 0;
+    rx_global(LCC_MTI_VERIFIED_NODE_ID_SIMPLE, OTHER, ours, 6);
+    CHECK(!duplicate_event_sent() && duplicate_calls == 1, "duplicate reported twice");
+
+    /* Its alias definition or initialization gives it away too */
+    setup();
+    start_node();
+    lcc_frame_t amd = { .id = lcc_control_id(LCC_CONTROL_AMD, 0, OTHER), .dlc = 6 };
+    memcpy(amd.data, ours, 6);
+    rx(&amd);
+    CHECK(duplicate_event_sent() && duplicate_calls == 1, "AMD duplicate not reported");
+
+    setup();
+    start_node();
+    rx_global(LCC_MTI_INITIALIZATION_COMPLETE_SIMPLE, OTHER, ours, 6);
+    CHECK(duplicate_event_sent() && duplicate_calls == 1, "Init Complete duplicate not reported");
 }
 
 static void test_protocol_support(void)
@@ -357,7 +403,8 @@ static void test_events(void)
           find_mti(LCC_MTI_PRODUCER_IDENTIFIED_VALID, 0) >= 0, "events not announced at init");
     int announced = 0;
     for (int i = 0; i < nsent; i++)
-        if (!lcc_is_control_frame(sent[i].id) && mti_of(&sent[i]) != LCC_MTI_INITIALIZATION_COMPLETE)
+        if (!lcc_is_control_frame(sent[i].id) && mti_of(&sent[i]) != LCC_MTI_INITIALIZATION_COMPLETE &&
+            mti_of(&sent[i]) != LCC_MTI_VERIFY_NODE_ID_GLOBAL)
             announced++;
     CHECK(announced == 3, "announced %d events, want 3 (zero ID skipped)", announced);
 
@@ -871,6 +918,7 @@ int main(void)
     test_alias_defend_and_duplicate();
     test_ame();
     test_verify_node_id();
+    test_duplicate_node_id();
     test_protocol_support();
     test_snip();
     test_optional_interaction_rejected();
