@@ -12,8 +12,8 @@ uint64_t mock_now_us;
 pio_hw_t mock_pio0;
 mock_dma_hw_t mock_dma;
 
-static int ndata; static railcom_data_t last[4]; static int last_ch = -1;
-void railcom_on_data(int ch, railcom_data_t *d) { ndata++; last[ch] = *d; last_ch = ch; }
+static int ndata, nrep[4]; static railcom_data_t last[4]; static int last_ch = -1;
+void railcom_on_data(int ch, railcom_data_t *d) { ndata++; nrep[ch]++; last[ch] = *d; last_ch = ch; }
 static int sig_state = -1;
 void railcom_on_signal(int ch, bool a) { if (ch == 0) sig_state = a; }
 
@@ -103,7 +103,10 @@ static void reset(void)
     memset(blocks, 0, sizeof(blocks));
     memset(&stats, 0, sizeof(stats));
     stats.high_min_us = UINT32_MAX;
+    signal_active = false;  // each case starts as if just powered up
+    last_cutout_us = 0;
     ndata = 0; last_ch = -1;
+    memset(nrep, 0, sizeof(nrep));
     memset(last, 0, sizeof(last));
 }
 
@@ -175,20 +178,46 @@ int main(int argc, char **argv)
     { cut_t c = base(); c.tcs = 0; c.tce = 50; c.d_off = 0; c.d_on = 0; run_cutout(&c, 20); }
     CHECK(stats.short_high == 1 && stats.cutouts == 0, "glitch: short=%u cutouts=%u", stats.short_high, stats.cutouts);
 
-    // 7. Loco leaves: cutouts continue without channel 1 data -> vacated after 1 s
+    // 7. Loco leaves: cutouts continue without channel 1 data -> vacated after
+    // 1 s; the empty blocks are reported vacant once at the same time
     reset();
     { cut_t p = base(); p.load[0] = 1; send_address(p, 0, 0, 0x00, 7, 4, 80);
-      int before = ndata;
+      CHECK(ndata == 1, "vacate: early reports: ndata=%d", ndata);
       cut_t empty = base();
       for (int i = 0; i < 200; i++) run_cutout(&empty, 20);   // 200 x 6 ms = 1.2 s
-      CHECK(ndata == before + 1 && !last[0].occupied && last[0].address == 7,
-            "vacate: ndata=%d occ=%d addr=%u", ndata, last[0].occupied, last[0].address); }
+      CHECK(nrep[0] == 2 && !last[0].occupied && last[0].address == 7,
+            "vacate: reports=%d occ=%d addr=%u", nrep[0], last[0].occupied, last[0].address);
+      for (int b = 1; b < 4; b++)
+          CHECK(nrep[b] == 1 && !last[b].occupied && last[b].address == 0,
+                "vacant block %d: reports=%d occ=%d addr=%u", b + 1, nrep[b],
+                last[b].occupied, last[b].address); }
 
     // 8. Cutouts stop -> signal lost
     mock_now_us += 600000; housekeeping();
     CHECK(sig_state == 0, "signal still active");
 
-    // 9. Timing sweep: every TCE/TCS/opto combination at the spec limits, ch1 at 80 and 97 µs
+    // 9. Signal lost while occupied: the block holds its report until cutouts
+    // resume, then stays occupied if the loco is seen again and is vacated
+    // a second later if not
+    reset();
+    { cut_t p = base(); p.load[0] = 1; send_address(p, 0, 0, 0x00, 9, 4, 80);
+      send_address(p, 1, 0, 0x00, 10, 4, 80);
+      mock_now_us += 5000000; housekeeping();                 // power off for 5 s
+      CHECK(sig_state == 0 && ndata == 2 && last[0].occupied && last[1].occupied,
+            "power off: sig=%d ndata=%d occ=%d/%d", sig_state, ndata,
+            last[0].occupied, last[1].occupied);
+      abs_sample += (uint64_t)5000000 * SAMPLES_PER_US;
+      send_address(p, 0, 0, 0x00, 9, 4, 80);                   // block 1 loco still there
+      CHECK(sig_state == 1 && ndata == 2 && last[1].occupied,
+            "power back: reported too early: ndata=%d", ndata);
+      send_address(p, 0, 0, 0x00, 9, 200, 80);
+      CHECK(nrep[0] == 1 && last[0].occupied, "power back: block 1 reports=%d occ=%d",
+            nrep[0], last[0].occupied);
+      CHECK(nrep[1] == 2 && !last[1].occupied && last[1].address == 10,
+            "power back: block 2 reports=%d occ=%d addr=%u", nrep[1], last[1].occupied,
+            last[1].address); }
+
+    // 10. Timing sweep: every TCE/TCS/opto combination at the spec limits, ch1 at 80 and 97 µs
     int sweep_fail = 0, sweep_n = 0;
     double tces[] = {454, 471, 488}, tcss[] = {26, 32}, dons[] = {2, 6}, doffs[] = {5, 150}, t1s[] = {80, 97};
     for (int a = 0; a < 3; a++) for (int b = 0; b < 2; b++) for (int d = 0; d < 2; d++)
@@ -206,7 +235,7 @@ int main(int argc, char **argv)
     }
     CHECK(sweep_fail == 0, "timing sweep: %d of %d failed", sweep_fail, sweep_n);
 
-    // 10. Channel 2 at its latest (ends at 454 µs) with the earliest cutout end must decode cleanly
+    // 11. Channel 2 at its latest (ends at 454 µs) with the earliest cutout end must decode cleanly
     reset();
     { cut_t c = base(); c.tce = 454; c.d_on = 2;
       for (int k = 0; k < 6; k++) c.tx[c.ntx++] = (tx_t){ 0, 0, 454 - 40.0 * (6 - k), enc[k + 1] };

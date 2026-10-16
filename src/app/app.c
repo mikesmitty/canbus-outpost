@@ -9,6 +9,7 @@
 #include "inputs.h"
 #include "lcc/node.h"
 #include "node_id.h"
+#include "railcom_app.h"
 #include "turnouts.h"
 #include "usb_gridconnect.h"
 #include "util/dbg.h"
@@ -20,6 +21,7 @@ static void defaults(config_layout_t *cfg, uint64_t node_id)
     memset(cfg, 0, sizeof(*cfg));
     identify_defaults(cfg);
     turnouts_defaults(cfg, node_id);
+    railcom_app_defaults(cfg, node_id);
 }
 
 static bool overlaps(uint32_t addr, uint32_t len, size_t start, size_t size)
@@ -42,6 +44,7 @@ void app_init(uint64_t node_id, bool node_id_assigned)
     identify_init();
     inputs_init(turnouts_input_pressed);
     turnouts_init();
+    railcom_app_init();
 }
 
 void app_start(void)
@@ -55,6 +58,8 @@ void app_config_written(uint32_t address, uint32_t length)
         identify_apply();
     if (overlaps(address, length, offsetof(config_layout_t, servos), sizeof(config.servos)))
         turnouts_config_written();
+    if (overlaps(address, length, offsetof(config_layout_t, tracks), sizeof(config.tracks)))
+        railcom_app_config_written();
 }
 
 void app_factory_reset(void)
@@ -87,9 +92,14 @@ void app_set_node_id(uint64_t node_id)
         return;
     }
     turnouts_migrate_events(&config, lcc_node_id(), node_id);
+    railcom_app_migrate_events(&config, lcc_node_id(), node_id);
     config_save();
 
-    usb_console_printf("nodeid set to %s, rebooting\n", id);
+    char last[18];
+    node_id_format(node_id + CONFIG_TRACKS, last);
+    usb_console_printf("nodeid set to %s, rebooting\n"
+                       "RailCom tracks report as the next %d IDs, up to %s, unless configured otherwise\n",
+                       id, CONFIG_TRACKS, last);
     vTaskDelay(pdMS_TO_TICKS(100));  // let the reply go out
     watchdog_reboot(0, 0, 0);
 }

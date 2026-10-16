@@ -37,7 +37,12 @@ void railcom_task(void *param);
 
 // Callbacks to be implemented by the LCC interface; called from railcom_task.
 // railcom_on_data fires when a block's loco changes, and with occupied = false
-// (and the last address) when it leaves.
+// (and the last address) when it leaves. Each block is also reported once
+// cutouts have arrived for a second with no loco in it (occupied = false,
+// address 0), so every block's state becomes known.
+// railcom_on_signal reports whether cutouts are arriving. While they aren't
+// (track power off, no RailCom cutout) nothing can be detected and blocks
+// keep their last report; it is confirmed or cleared once cutouts resume.
 extern void railcom_on_data(int channel, railcom_data_t *data);
 extern void railcom_on_signal(int channel, bool active);
 

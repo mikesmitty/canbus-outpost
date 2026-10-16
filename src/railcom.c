@@ -151,6 +151,7 @@ typedef struct {
     uint8_t candidate_count;
 
     railcom_data_t reported;
+    bool known;  // reported at least once
 } rc_block_t;
 
 static uint16_t __attribute__((aligned(RING_BYTES))) ring[RING_SAMPLES];
@@ -287,6 +288,7 @@ static void handle_ch1(int blk, uint8_t id, uint8_t data,
 
     if (b->candidate_count >= 2 && !same_data(&b->candidate, &b->reported)) {
         b->reported = b->candidate;
+        b->known = true;
         railcom_on_data(blk, &b->reported);
     }
 }
@@ -529,14 +531,23 @@ static void housekeeping(void)
     if (signal != signal_active) {
         signal_active = signal;
         DBG("RailCom: cutouts %s\n", signal ? "detected" : "lost");
-        for (int blk = 0; blk < RAILCOM_MAX_CHANNELS; blk++)
+        for (int blk = 0; blk < RAILCOM_MAX_CHANNELS; blk++) {
+            // Without cutouts nothing can be detected, so blocks keep their
+            // last report; when cutouts resume, a loco gets the usual time
+            // to be seen again before its block is reported vacated.
+            if (signal)
+                blocks[blk].last_adr_us = now;
             railcom_on_signal(blk, signal);
+        }
     }
 
+    // A block with no loco seen for ADDR_TIMEOUT_US while cutouts arrive is
+    // vacant: report it if it was occupied, or if it hasn't been reported yet
     for (int blk = 0; blk < RAILCOM_MAX_CHANNELS; blk++) {
         rc_block_t *b = &blocks[blk];
-        if (b->reported.occupied &&
-            (!signal || now - b->last_adr_us > ADDR_TIMEOUT_US)) {
+        if (signal && now - b->last_adr_us > ADDR_TIMEOUT_US &&
+            (b->reported.occupied || !b->known)) {
+            b->known = true;
             b->reported.occupied = false;
             b->candidate_count = 0;
             b->high_us = 0;

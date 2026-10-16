@@ -17,6 +17,7 @@
 #define CONFIG_VERSION 1
 
 #define CONFIG_SERVOS  4
+#define CONFIG_TRACKS  4
 
 typedef struct {
     uint8_t throw_event[8];
@@ -38,6 +39,16 @@ typedef struct {
     uint8_t reserved[3];
 } config_servo_t;
 
+// One RailCom detector block
+typedef struct {
+    uint8_t description[64];
+    uint8_t occupied_event[8];
+    uint8_t clear_event[8];
+    uint8_t reporter_id[8];  // DCC detector event range base, low two bytes 0
+    uint8_t orientation;     // CONFIG_ORIENT_*
+    uint8_t reserved[7];
+} config_track_t;
+
 typedef struct {
     // Segment "Node Identity", origin 0
     uint8_t user_name[64];
@@ -48,15 +59,24 @@ typedef struct {
     uint8_t identify_reserved[2];
     // Segment "Switch Machines", origin 132
     config_servo_t servos[CONFIG_SERVOS];
+    // Segment "RailCom Detectors", origin 612
+    config_track_t tracks[CONFIG_TRACKS];
 } config_layout_t;
 
 #define CONFIG_DEFAULT_THROWN     0
 #define CONFIG_DEFAULT_CLOSED     1
 #define CONFIG_DEFAULT_NO_CHANGE  2
 
+// Which rail the detector senses, for reporting locomotive orientation
+#define CONFIG_ORIENT_OFF     0
+#define CONFIG_ORIENT_RAIL_A  1
+#define CONFIG_ORIENT_RAIL_B  2
+
 _Static_assert(sizeof(config_servo_t) == 120, "servo group stride must match the CDI");
 _Static_assert(offsetof(config_layout_t, identify_enabled) == 128, "Identify segment origin");
 _Static_assert(offsetof(config_layout_t, servos) == 132, "Switch Machines segment origin");
-_Static_assert(sizeof(config_layout_t) == 612, "configuration space size");
+_Static_assert(sizeof(config_track_t) == 96, "track group stride must match the CDI");
+_Static_assert(offsetof(config_layout_t, tracks) == 612, "RailCom Detectors segment origin");
+_Static_assert(sizeof(config_layout_t) == 996, "configuration space size");
 
 #endif // CONFIG_LAYOUT_H

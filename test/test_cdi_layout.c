@@ -75,6 +75,8 @@ static void walk(void)
                           sizeof(((config_layout_t *)0)->member), kind }
 #define S(member, kind) { offsetof(config_servo_t, member), \
                           sizeof(((config_servo_t *)0)->member), kind }
+#define T(member, kind) { offsetof(config_track_t, member), \
+                          sizeof(((config_track_t *)0)->member), kind }
 
 int main(void)
 {
@@ -103,6 +105,14 @@ int main(void)
         S(description, KIND_STRING),
         S(reserved, KIND_STRING),
     };
+    static const field_t track_fields[] = {
+        T(description, KIND_STRING),
+        T(occupied_event, KIND_EVENTID),
+        T(clear_event, KIND_EVENTID),
+        T(reporter_id, KIND_EVENTID),
+        T(orientation, KIND_INT),
+        T(reserved, KIND_STRING),
+    };
 
     field_t want[256];
     int nwant = 0;
@@ -112,6 +122,11 @@ int main(void)
         for (size_t i = 0; i < sizeof(servo_fields) / sizeof(servo_fields[0]); i++) {
             want[nwant] = servo_fields[i];
             want[nwant++].offset += offsetof(config_layout_t, servos) + s * sizeof(config_servo_t);
+        }
+    for (int t = 0; t < CONFIG_TRACKS; t++)
+        for (size_t i = 0; i < sizeof(track_fields) / sizeof(track_fields[0]); i++) {
+            want[nwant] = track_fields[i];
+            want[nwant++].offset += offsetof(config_layout_t, tracks) + t * sizeof(config_track_t);
         }
 
     walk();

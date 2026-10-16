@@ -12,4 +12,5 @@ build
 lib/lcc/test/test_lcc
 test/test_cdi_layout
 test/test_railcom
+test/test_railcom_app
 *.dSYM/

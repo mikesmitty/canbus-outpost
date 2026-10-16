@@ -143,6 +143,43 @@ const char cdi_xml[] =
     "</group>"
     "</segment>"
 
+    "<segment space='253' origin='612'>"
+    "<name>RailCom Detectors</name>"
+    "<description>Each track reports the RailCom decoders seen on it. Only locomotives "
+    "and cars whose decoders send RailCom are detected.</description>"
+    "<group replication='4'>"
+    "<name>Track</name>"
+    "<repname>Track 1</repname>"
+    "<repname>Track 2</repname>"
+    "<repname>Track 3</repname>"
+    "<repname>Track 4</repname>"
+
+    "<string size='64'><name>Description</name></string>"
+    "<eventid><name>Occupied Event</name>"
+    "<description>Sent when a RailCom decoder is detected on the track</description></eventid>"
+    "<eventid><name>Clear Event</name>"
+    "<description>Sent when no decoder has been seen on the track for a second</description></eventid>"
+    "<eventid><name>Reporter ID</name>"
+    "<description>Reports which locomotive is on the track (OpenLCB DCC detector events). "
+    "Enter this as the address of a JMRI LCC Reporter. It must be a unique ID of its own "
+    "with 00.00 at the end; all zeros turns reporting off.</description></eventid>"
+    "<int size='1'>"
+    "<name>Orientation</name>"
+    "<description>Whether reports say which way a locomotive faces. Rail A is positive in "
+    "the first half of each DCC bit; the detector senses the TRACK_R rail. If JMRI shows "
+    "locomotives facing the wrong way, choose the other rail.</description>"
+    "<map>"
+    "<relation><property>0</property><value>Not reported</value></relation>"
+    "<relation><property>1</property><value>TRACK_R is Rail A</value></relation>"
+    "<relation><property>2</property><value>TRACK_R is Rail B</value></relation>"
+    "</map>"
+    "<default>0</default>"
+    "</int>"
+    "<string size='7'/>" /* room for more settings */
+
+    "</group>"
+    "</segment>"
+
     "</cdi>";
 
 const size_t cdi_xml_len = sizeof(cdi_xml); /* includes null terminator */
