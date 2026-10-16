@@ -1,0 +1,12 @@
+(version 1)
+
+# Isolation between the track (RailCom) side and everything else.
+# Track side = booster/track rails, the +5VR supply referenced to BOOSTER_R,
+# the comparator front end, and side 1 of the ISO7720s (GNDD).
+# /ALT_H and /ALT_L are a pass-through pair between J2 and J10 and belong to
+# neither domain, so they are excluded.
+# Zone fills honor this rule, so logic pours pull back on refill.
+# If a schematic change renames an auto-named net (Net-(...)), update it here.
+(rule "track_to_logic"
+  (constraint clearance (min 1mm))
+  (condition "(A.NetName == '/BOOSTER_?' || A.NetName == '/TRACK_R?' || A.NetName == '+5VR' || A.NetName == 'GNDD' || A.NetName == '/RC_REF_H' || A.NetName == '/CMP_??' || A.NetName == 'Net-(U?A--)' || A.NetName == 'Net-(U?B-+)' || A.NetName == 'Net-(D14-K)' || A.NetName == 'Net-(J3-Pin_2)' || A.NetName == 'Net-(R35-Pad1)' || A.NetName == 'unconnected-(U11-*') && !(B.NetName == '/BOOSTER_?' || B.NetName == '/TRACK_R?' || B.NetName == '+5VR' || B.NetName == 'GNDD' || B.NetName == '/RC_REF_H' || B.NetName == '/CMP_??' || B.NetName == 'Net-(U?A--)' || B.NetName == 'Net-(U?B-+)' || B.NetName == 'Net-(D14-K)' || B.NetName == 'Net-(J3-Pin_2)' || B.NetName == 'Net-(R35-Pad1)' || B.NetName == 'unconnected-(U11-*' || B.NetName == '/ALT_?' || B.NetName == '')"))

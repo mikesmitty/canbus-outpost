@@ -1,3 +1,9 @@
+hardware/**/*-backups
+hardware/**/*_old
+hardware/**/*auto*save*
+hardware/**/production/
+*.lck
+*.bak
 build
 !.vscode/*
 /.cache
