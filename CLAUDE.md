@@ -18,13 +18,18 @@ make clean
 # Build and flash to connected Pico 2 via picotool
 make flash
 
-# Host-side tests: LCC library, CDI/config layout, RailCom decoder
+# Once per board, in BOOTSEL mode: install the A/B partition table (needed
+# for LCC firmware upgrades), keeping the saved configuration and node ID
+make partition-table
+
+# Host-side tests: LCC library, CDI/config layout, RailCom decoder and
+# events, firmware image checks
 make test
 ```
 
 The build system uses CMake 3.13+ generating Ninja build files. The Pico SDK (v2.2.0) is expected at `~/.pico-sdk/sdk/2.2.0/`, and FreeRTOS-Kernel at the path in `FREERTOS_KERNEL_PATH`. The toolchain is `arm-none-eabi-gcc` from the Pico Toolchain.
 
-Build artifacts go to `build/` (`.elf` and `.uf2` files).
+Build artifacts go to `build/`: `.uf2`/`.elf` for USB, `.bin` for LCC firmware upgrades.
 
 `make test` builds and runs the host tests with the system C compiler; hardware behavior is verified manually (RTT log, bench testing).
 
@@ -34,7 +39,7 @@ The firmware runs FreeRTOS on core 0 of the RP2350. The entry point is `canbus-o
 
 ### LCC library (`lib/lcc/`)
 
-Custom OpenLCB/LCC implementation in plain C11 with no SDK or RTOS calls: frames go out through a send hook and time comes in as a millisecond counter, so it builds and is tested on the host (`lib/lcc/test/`). It covers alias allocation and conflict handling, Verify Node ID, Protocol Support, SNIP, an event producer/consumer registry, datagrams (reassembly, rejection, resend), memory configuration and GridConnect framing. Public headers are in `lib/lcc/include/lcc/`.
+Custom OpenLCB/LCC implementation in plain C11 with no SDK or RTOS calls: frames go out through a send hook and time comes in as a millisecond counter, so it builds and is tested on the host (`lib/lcc/test/`). It covers alias allocation and conflict handling, Verify Node ID, Protocol Support, SNIP, an event producer/consumer registry with producer ranges, datagrams (reassembly, rejection, resend), memory configuration, firmware upgrade and GridConnect framing. Public headers are in `lib/lcc/include/lcc/`.
 
 ### Tasks
 
@@ -49,13 +54,15 @@ Work is event-driven (queues, task notifications, FreeRTOS timers, GPIO interrup
 
 - **config** (`config_layout.h`, `config.c`): the LCC configuration space as a byte image in OpenLCB byte order (big-endian). `config_layout_t` must match the CDI in `cdi_data.c`; `make test` checks it.
 - **turnouts**: servo switch machines (throw/close/center events, feedback, frog output, fascia toggle).
-- **identify**, **inputs** (debounced fascia buttons), **railcom_app** (RailCom reports into the LCC task).
+- **railcom_app**: per track, an Occupied/Clear event pair and locomotive reports in the OpenLCB DCC detector format (a 64K event range per track for JMRI reporters; default reporter IDs are the four unique IDs after the node ID). Track states hold while cutouts are missing (track power off).
+- **identify**, **inputs** (debounced fascia buttons).
 
 ### Drivers and storage
 
 - **can2040** (`src/can2040.c/h`): PIO-based software CAN controller (third party).
 - **servo** (`src/servo.c/h`): 4-channel PWM servo output at 50 Hz with timed motion.
-- **nv_storage** (`src/nv_storage.c/h`): power-safe records (two sectors each, CRC) at the top of flash, for the configuration and the node ID.
+- **nv_storage** (`src/nv_storage.c/h`): power-safe records (two sectors each, CRC) in the top 16 KB of flash, outside the partitions, for the configuration and the node ID. Read through the untranslated XIP window, since a partition boot maps only that partition.
+- **firmware_update** (`src/firmware_update.c/h`, `src/fw_image.c/h`): LCC firmware upgrades into the A/B partitions of `partition_table.json`. Images are built try-before-you-buy with a SHA-256 hash: a new image runs on trial and confirms itself 5 s after the node comes up; if it resets before then, or hasn't confirmed within 60 s, the next boot returns to the previous one. Without a partition table the node doesn't offer upgrades. Loading firmware over SWD writes at the start of flash and replaces the partition table, so flash with picotool.
 - **node_id** (`src/node_id.c/h`): the LCC node ID, set per board with the `nodeid` USB command; falls back to one derived from the chip serial number.
 
 **Pin assignments** are defined in `src/board.h`.
