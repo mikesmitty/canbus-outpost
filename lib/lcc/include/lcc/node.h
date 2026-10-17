@@ -29,7 +29,8 @@ typedef struct {
     void (*config_update_complete)(void);
     /* Memory configuration: confirmed factory reset. A reboot follows. */
     void (*factory_reset)(void);
-    /* Memory configuration: reboot now. */
+    /* Reboot now: after a memory configuration Reboot, factory reset or
+     * Unfreeze of a good image, or lcc_reboot. The alias is released. */
     void (*reboot)(void);
     /* Another node announced this node's ID (once per start). The library
      * has sent the Duplicate Node ID Detected event; the application
@@ -67,6 +68,11 @@ void lcc_run_timers(uint32_t now_ms);
 
 /* Milliseconds until lcc_run_timers needs calling, or LCC_NO_TIMER. */
 uint32_t lcc_ms_until_next_timer(uint32_t now_ms);
+
+/* Reboot through the reboot hook. The alias is released first (Alias Map
+ * Reset) and the node goes silent; the hook runs 100 ms later, so the
+ * frames already queued can go out. Does nothing without the hook. */
+void lcc_reboot(uint32_t now_ms);
 
 /* True once the alias is claimed and Initialization Complete is sent. */
 bool lcc_is_initialized(void);

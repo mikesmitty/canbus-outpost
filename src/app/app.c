@@ -1,13 +1,11 @@
 #include "app.h"
 #include <stddef.h>
 #include <string.h>
-#include "FreeRTOS.h"
-#include "task.h"
-#include "hardware/watchdog.h"
 #include "config.h"
 #include "identify.h"
 #include "inputs.h"
 #include "lcc/node.h"
+#include "lcc_task.h"
 #include "node_id.h"
 #include "railcom_app.h"
 #include "turnouts.h"
@@ -110,6 +108,5 @@ void app_set_node_id(uint64_t node_id)
     usb_console_printf("nodeid set to %s, rebooting\n"
                        "RailCom tracks report as the next %d IDs, up to %s, unless configured otherwise\n",
                        id, CONFIG_TRACKS, last);
-    vTaskDelay(pdMS_TO_TICKS(100));  // let the reply go out
-    watchdog_reboot(0, 0, 0);
+    lcc_task_reboot();  // after 100 ms, so the reply goes out too
 }

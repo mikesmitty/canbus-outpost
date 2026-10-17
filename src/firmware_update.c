@@ -176,7 +176,7 @@ static void trial_expired(TimerHandle_t t)
 {
     (void)t;
     DBG("firmware: new image not confirmed, going back to the previous one\n");
-    watchdog_reboot(0, 0, 0);  // a normal boot skips an unconfirmed image
+    lcc_task_reboot();  // a normal boot skips an unconfirmed image
 }
 
 static void confirm_in_task(uint32_t arg)

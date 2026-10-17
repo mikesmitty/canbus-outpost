@@ -24,6 +24,10 @@ typedef void (*lcc_task_fn_t)(uint32_t arg);
 bool lcc_task_call(lcc_task_fn_t fn, uint32_t arg);
 bool lcc_task_call_from_isr(lcc_task_fn_t fn, uint32_t arg, BaseType_t *woken);
 
+// From any task: reboot through the LCC library, which releases the alias
+// first and reboots 100 ms later (lcc_reboot).
+void lcc_task_reboot(void);
+
 // (Re)start the hardware watchdog the LCC task feeds.
 void lcc_task_start_watchdog(void);
 

@@ -126,6 +126,18 @@ static void heartbeat_in_task(uint32_t arg)
     }
 }
 
+static void reboot_in_task(uint32_t arg)
+{
+    (void)arg;
+    lcc_reboot(now_ms());
+}
+
+void lcc_task_reboot(void)
+{
+    if (!lcc_task_call(reboot_in_task, 0))
+        firmware_update_reboot();  // the queue is full: reboot without releasing the alias
+}
+
 void lcc_task_start_watchdog(void)
 {
     watchdog_enable(WATCHDOG_TIMEOUT_MS, true);

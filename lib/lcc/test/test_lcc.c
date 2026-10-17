@@ -122,6 +122,13 @@ static int find_mti(uint16_t mti, int from)
     return -1;
 }
 
+/* Alias Map Reset releasing `alias` */
+static bool is_amr(const lcc_frame_t *f, uint16_t alias)
+{
+    return f->id == lcc_control_id(LCC_CONTROL_AMR, 0, alias) && f->dlc == 6 &&
+           lcc_get_be48(f->data) == NODE_ID;
+}
+
 /* Reassemble the datagram we sent to `dst` starting at frame `from`. */
 static int collect_datagram(uint16_t dst, int from, uint8_t *out)
 {
@@ -243,6 +250,55 @@ static void test_ame(void)
     lcc_put_be48(ame.data, 0x010203040506ULL);
     rx(&ame);
     CHECK(nsent == 0, "answered AME for another node");
+}
+
+/* lcc_reboot: release the alias, go silent, reboot 100 ms later */
+static void test_reboot(void)
+{
+    setup();
+    start_node();
+    uint16_t alias = lcc_alias();
+    now += 5000;  /* the library hasn't been called for a while */
+    lcc_reboot(now);
+    CHECK(nsent == 1 && is_amr(&sent[0], alias), "alias not released");
+    CHECK(!lcc_is_initialized(), "initialized with the alias released");
+    CHECK(lcc_ms_until_next_timer(now) == 100, "reboot timer not reported");
+
+    /* Silent from then on: no replies, events or alias defense */
+    nsent = 0;
+    rx_global(LCC_MTI_VERIFY_NODE_ID_GLOBAL, OTHER, NULL, 0);
+    lcc_frame_t ame = { .id = lcc_control_id(LCC_CONTROL_AME, 0, OTHER) };
+    rx(&ame);
+    lcc_event_send_id(0x0501010112340001ULL);
+    lcc_producer_send_identified(0x0501010112340001ULL, LCC_EVENT_VALID);  /* e.g. a RailCom report */
+    lcc_frame_t cid = { .id = lcc_control_id(0x123, 7, alias) };  /* another node takes the alias */
+    rx(&cid);
+    rx_global(LCC_MTI_VERIFY_NODE_ID_GLOBAL, alias, NULL, 0);
+    advance(99);
+    CHECK(nsent == 0, "%d frames sent with the alias released", nsent);
+    CHECK(reboot_calls == 0, "rebooted before the frames could go out");
+    advance(1);
+    CHECK(reboot_calls == 1, "did not reboot");
+    advance(1000);
+    CHECK(reboot_calls == 1 && nsent == 0, "rebooted twice");
+
+    /* Before the alias is claimed there is none to release */
+    setup();
+    lcc_start(now);
+    nsent = 0;
+    lcc_reboot(now);
+    advance(100);
+    CHECK(reboot_calls == 1, "did not reboot before the alias claim");
+    advance(500);
+    CHECK(nsent == 0 && !lcc_is_initialized(), "claimed the alias while rebooting");
+
+    /* No reboot hook: the node carries on */
+    setup();
+    lcc_node_config_t cfg = { .node_id = NODE_ID, .hooks = { .send = hook_send } };
+    lcc_init(&cfg);
+    start_node();
+    lcc_reboot(now);
+    CHECK(nsent == 0 && lcc_is_initialized(), "released the alias with no way to reboot");
 }
 
 static void test_verify_node_id(void)
@@ -647,19 +703,23 @@ static void test_memconfig_commands(void)
     CHECK(request(done, sizeof(done), false, r) == 0 && update_calls == 1, "update complete");
 
     const uint8_t reboot[] = { 0x20, 0xA9 };
+    uint16_t alias = lcc_alias();
     CHECK(request(reboot, sizeof(reboot), false, r) == 0, "reboot not acknowledged");
+    CHECK(nsent == 2 && is_amr(&sent[1], alias), "alias not released after the OK");
     CHECK(reboot_calls == 0, "rebooted before replies could go out");
     advance(100);
     CHECK(reboot_calls == 1, "did not reboot");
 
+    setup_memconfig();
     uint8_t reset[8] = { 0x20, 0xAA };
     lcc_put_be48(reset + 2, 0x010203040506ULL);
     CHECK(request(reset, sizeof(reset), false, r) == -LCC_ERROR_INVALID_ARGS && factory_calls == 0,
           "factory reset with wrong node ID accepted");
     lcc_put_be48(reset + 2, NODE_ID);
     CHECK(request(reset, sizeof(reset), false, r) == 0 && factory_calls == 1, "factory reset");
+    CHECK(nsent == 2 && is_amr(&sent[1], lcc_alias()), "alias not released after a factory reset");
     advance(100);
-    CHECK(reboot_calls == 2, "no reboot after factory reset");
+    CHECK(reboot_calls == 1, "no reboot after factory reset");
 }
 
 static uint8_t fw_image[1024];
@@ -722,6 +782,12 @@ static void test_firmware_upgrade(void)
     const uint8_t info[] = { 0x20, 0x84, 0xEF };
     CHECK(request(info, sizeof(info), true, r) == 3 && r[1] == 0x86, "space present before freeze");
 
+    /* Unfreeze without an upgrade is harmless */
+    const uint8_t unfreeze[] = { 0x20, 0xA0, 0xEF };
+    CHECK(request(unfreeze, sizeof(unfreeze), false, r) == 0 && fw_unfreezes == 0, "stray unfreeze");
+    advance(500);
+    CHECK(reboot_calls == 0, "stray unfreeze rebooted");
+
     const uint8_t freeze_other[] = { 0x20, 0xA1, 0xFD };
     CHECK(request(freeze_other, sizeof(freeze_other), false, r) == -0x1081 && fw_freezes == 0,
           "froze another space");
@@ -760,7 +826,6 @@ static void test_firmware_upgrade(void)
 
     /* A bad image is reported and ends the upgrade without a reboot */
     fw_unfreeze_error = LCC_ERROR_FIRMWARE_CORRUPTED;
-    const uint8_t unfreeze[] = { 0x20, 0xA0, 0xEF };
     CHECK(request(unfreeze, sizeof(unfreeze), false, r) == -LCC_ERROR_FIRMWARE_CORRUPTED &&
           !lcc_firmware_upgrade_active(), "bad image left the node in upgrade state");
     bits = pip_bits();
@@ -782,19 +847,17 @@ static void test_firmware_upgrade(void)
           lcc_firmware_upgrade_active(), "second freeze failed");
     CHECK(fw_write_request(0, 64, 0x66) == 0 && fw_image[0] == 0x66, "second transfer failed");
 
-    /* A good image: OK, leave upgrade state, reboot shortly after */
+    /* A good image: OK, leave upgrade state, release the alias, reboot
+     * shortly after */
+    uint16_t alias = lcc_alias();
     CHECK(request(unfreeze, sizeof(unfreeze), false, r) == 0 && !lcc_firmware_upgrade_active() &&
           fw_unfreezes == 2, "unfreeze failed");
+    CHECK(nsent == 2 && is_amr(&sent[1], alias), "alias not released after the OK");
     CHECK(find_mti(LCC_MTI_INITIALIZATION_COMPLETE, 0) < 0,
           "Initialization Complete before rebooting into the new image");
     CHECK(reboot_calls == 0, "rebooted before the OK went out");
     advance(100);
     CHECK(reboot_calls == 1, "no reboot into the new image");
-
-    /* Unfreeze when not frozen is harmless */
-    CHECK(request(unfreeze, sizeof(unfreeze), false, r) == 0 && fw_unfreezes == 2, "stray unfreeze");
-    advance(500);
-    CHECK(reboot_calls == 1, "stray unfreeze rebooted");
 
     /* Without firmware upgrade support */
     setup_memconfig();
@@ -919,6 +982,7 @@ int main(void)
     test_alias_conflict_while_checking();
     test_alias_defend_and_duplicate();
     test_ame();
+    test_reboot();
     test_verify_node_id();
     test_duplicate_node_id();
     test_protocol_support();

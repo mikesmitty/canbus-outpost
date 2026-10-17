@@ -34,7 +34,7 @@
 #define SPACE_FLAG_READ_ONLY  0x01
 
 #define MAX_READ          64
-#define REBOOT_DELAY_MS   100  /* let our replies go out first */
+#define REBOOT_DELAY_MS   100  /* let our replies and the Alias Map Reset go out */
 
 static const lcc_memspace_t *spaces[LCC_MAX_MEMSPACES];
 static int space_count;
@@ -96,6 +96,9 @@ static uint8_t reply_header(uint8_t *buf, uint8_t cmd, const rw_cmd_t *c)
 
 static void schedule_reboot(void)
 {
+    if (!lcc_config.hooks.reboot)
+        return;
+    lcc_release_alias();
     reboot_pending = true;
     reboot_at = lcc_now + REBOOT_DELAY_MS;
 }
@@ -425,12 +428,17 @@ void lcc_memconfig_reset(void)
     unfreeze_result = 0;
 }
 
+void lcc_reboot(uint32_t now_ms)
+{
+    lcc_now = now_ms;
+    schedule_reboot();
+}
+
 void lcc_memconfig_run_timers(uint32_t now)
 {
     if (reboot_pending && lcc_time_reached(now, reboot_at)) {
         reboot_pending = false;
-        if (lcc_config.hooks.reboot)
-            lcc_config.hooks.reboot();
+        lcc_config.hooks.reboot();
     }
 }
 

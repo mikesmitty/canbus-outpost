@@ -18,6 +18,7 @@ typedef enum {
     STATE_IDLE,       /* not started */
     STATE_CHECKING,   /* CID frames sent, waiting for objections */
     STATE_PERMITTED,  /* alias claimed, Initialization Complete sent */
+    STATE_RELEASED,   /* alias given up for a reboot: silent until then */
 } node_state_t;
 
 static struct {
@@ -35,7 +36,8 @@ static struct {
 
 void lcc_send_frame(const lcc_frame_t *frame)
 {
-    lcc_config.hooks.send(frame);
+    if (node.state != STATE_RELEASED)
+        lcc_config.hooks.send(frame);
 }
 
 void lcc_send_global(uint16_t mti, const uint8_t *data, uint8_t len)
@@ -148,6 +150,18 @@ static void claim_alias(void)
 
     /* Only a node with the same ID answers this */
     lcc_send_global(LCC_MTI_VERIFY_NODE_ID_GLOBAL, nid, 6);
+}
+
+/* Before a reboot: release the alias (Alias Map Reset), so other nodes
+ * drop their mapping for it, and send nothing more. */
+void lcc_release_alias(void)
+{
+    if (node.state == STATE_PERMITTED) {
+        uint8_t nid[6];
+        node_id_bytes(nid);
+        send_control(LCC_CONTROL_AMR, nid, 6);
+    }
+    node.state = STATE_RELEASED;
 }
 
 /* Another node sent a frame with our alias as its source. */
@@ -336,7 +350,7 @@ void lcc_start(uint32_t now_ms)
 void lcc_frame_received(const lcc_frame_t *frame, uint32_t now_ms)
 {
     lcc_now = now_ms;
-    if (node.state == STATE_IDLE)
+    if (node.state == STATE_IDLE || node.state == STATE_RELEASED)
         return;
 
     bool control = lcc_is_control_frame(frame->id);
@@ -387,10 +401,11 @@ void lcc_run_timers(uint32_t now_ms)
         else
             claim_alias();
     }
-    if (node.state == STATE_PERMITTED) {
+    if (node.state == STATE_PERMITTED)
         lcc_datagram_run_timers(now_ms);
+    /* The reboot timer runs on after the alias is released */
+    if (node.state == STATE_PERMITTED || node.state == STATE_RELEASED)
         lcc_memconfig_run_timers(now_ms);
-    }
 }
 
 uint32_t lcc_ms_until_next_timer(uint32_t now_ms)
@@ -399,8 +414,10 @@ uint32_t lcc_ms_until_next_timer(uint32_t now_ms)
     lcc_timer_min(&next, node.state == STATE_CHECKING, now_ms, node.cid_deadline);
     if (node.state == STATE_PERMITTED) {
         uint32_t d = lcc_datagram_next_timer(now_ms);
-        uint32_t m = lcc_memconfig_next_timer(now_ms);
         if (d < next) next = d;
+    }
+    if (node.state == STATE_PERMITTED || node.state == STATE_RELEASED) {
+        uint32_t m = lcc_memconfig_next_timer(now_ms);
         if (m < next) next = m;
     }
     return next;
