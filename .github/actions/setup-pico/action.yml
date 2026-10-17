@@ -30,7 +30,7 @@ runs:
     # Bump the trailing number when what gets downloaded changes
     - name: Cache toolchain and SDKs
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/pico
         key: pico-${{ runner.os }}-${{ steps.versions.outputs.toolchain }}-sdk${{ steps.versions.outputs.sdk }}-freertos-${{ inputs.freertos-ref }}-2
