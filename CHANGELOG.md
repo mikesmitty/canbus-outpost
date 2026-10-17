@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.1](https://github.com/mikesmitty/canbus-outpost/compare/v0.3.0...v0.3.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **lcc:** answer a repeated Unfreeze with its first result ([103fb1f](https://github.com/mikesmitty/canbus-outpost/commit/103fb1f689e4ea16d916746510c8d5586c9d0d28))
+* **lcc:** release the alias before rebooting ([9db3462](https://github.com/mikesmitty/canbus-outpost/commit/9db346224dcf052ccae272054da09b880f52d485))
+
+
+### Miscellaneous
+
+* Update actions/cache action to v6 ([#7](https://github.com/mikesmitty/canbus-outpost/issues/7)) ([3e405ec](https://github.com/mikesmitty/canbus-outpost/commit/3e405ecbe0236e8702a578f87b1e819e90c3dbc9))
+* Update actions/checkout action to v7 ([#8](https://github.com/mikesmitty/canbus-outpost/issues/8)) ([a9a1259](https://github.com/mikesmitty/canbus-outpost/commit/a9a1259d585852e2aeac5d6575b040a21e11128d))
+* Update actions/upload-artifact action to v7 ([#9](https://github.com/mikesmitty/canbus-outpost/issues/9)) ([ea20c2c](https://github.com/mikesmitty/canbus-outpost/commit/ea20c2cfdc0d99d1b77eee26af531ba1d1d3b4ba))
+* Update googleapis/release-please-action action to v5 ([#10](https://github.com/mikesmitty/canbus-outpost/issues/10)) ([fe608e2](https://github.com/mikesmitty/canbus-outpost/commit/fe608e21a85961c50adbe10631de326f299a0c18))
+
 ## [0.3.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.2.1...v0.3.0) (2026-10-16)
 
 
