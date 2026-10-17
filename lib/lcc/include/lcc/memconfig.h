@@ -60,7 +60,8 @@ typedef struct {
     /* End of the upgrade, after a failed transfer too. Return 0 if the
      * image is complete and valid: the reboot hook then runs to start it.
      * Otherwise return an error code for the client; the node carries on
-     * with its current firmware. */
+     * with its current firmware. A repeated Unfreeze gets the same answer
+     * without another call. */
     uint16_t (*unfreeze)(void);
 } lcc_firmware_upgrade_t;
 

@@ -768,8 +768,11 @@ static void test_firmware_upgrade(void)
           "PIP after a failed upgrade %012llX", (unsigned long long)bits);
     advance(500);
     CHECK(reboot_calls == 0, "rebooted into a bad image");
-    /* JMRI unfreezes again when an Unfreeze is rejected */
-    CHECK(request(unfreeze, sizeof(unfreeze), false, r) == 0, "second unfreeze rejected");
+    /* JMRI unfreezes again when an Unfreeze is rejected, and a client
+     * resending the Unfreeze must not take the repeat's answer for success */
+    fw_unfreeze_error = 0;
+    CHECK(request(unfreeze, sizeof(unfreeze), false, r) == -LCC_ERROR_FIRMWARE_CORRUPTED &&
+          fw_unfreezes == 1, "repeated unfreeze answered differently");
     advance(500);
     CHECK(reboot_calls == 0, "second unfreeze rebooted into the bad image");
     CHECK(fw_write_request(0, 64, 0x11) == -0x1081, "writes accepted after the upgrade ended");
@@ -780,7 +783,6 @@ static void test_firmware_upgrade(void)
     CHECK(fw_write_request(0, 64, 0x66) == 0 && fw_image[0] == 0x66, "second transfer failed");
 
     /* A good image: OK, leave upgrade state, reboot shortly after */
-    fw_unfreeze_error = 0;
     CHECK(request(unfreeze, sizeof(unfreeze), false, r) == 0 && !lcc_firmware_upgrade_active() &&
           fw_unfreezes == 2, "unfreeze failed");
     CHECK(find_mti(LCC_MTI_INITIALIZATION_COMPLETE, 0) < 0,

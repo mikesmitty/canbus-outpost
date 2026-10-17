@@ -45,6 +45,7 @@ static uint32_t reboot_at;
 static const lcc_firmware_upgrade_t *firmware;
 static bool frozen;
 static bool start_firmware;  /* Unfreeze accepted the image */
+static uint16_t unfreeze_result;  /* the answer to the last Unfreeze */
 
 static const lcc_memspace_t *find_space(uint8_t space)
 {
@@ -117,14 +118,16 @@ static uint16_t accept_freeze(uint8_t cmd, const uint8_t *d, uint8_t len)
         return 0;
     }
 
+    /* A client that resends an Unfreeze (its answer was lost, or it was a
+     * temporary error) gets the same answer, not an OK for a bad image */
     if (!frozen)
-        return 0;
+        return unfreeze_result;
     /* Clients unfreeze after a failed transfer too, to end the upgrade, so
      * a bad image ends it as well; only a good one is started */
     frozen = false;
-    uint16_t code = firmware->unfreeze();
-    start_firmware = code == 0;
-    return code;
+    unfreeze_result = firmware->unfreeze();
+    start_firmware = unfreeze_result == 0;
+    return unfreeze_result;
 }
 
 /* Firmware data goes to the application before the OK, so the client
@@ -419,6 +422,7 @@ void lcc_memconfig_reset(void)
     firmware = NULL;
     frozen = false;
     start_firmware = false;
+    unfreeze_result = 0;
 }
 
 void lcc_memconfig_run_timers(uint32_t now)
