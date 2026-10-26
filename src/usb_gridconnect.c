@@ -48,7 +48,7 @@ bool usb_gc_send_from_isr(const lcc_frame_t *frame, BaseType_t *woken)
 
 void usb_console_printf(const char *fmt, ...)
 {
-    char buf[96];
+    char buf[160];  // the longest message, from setting the node ID, is ~140
     va_list args;
     va_start(args, fmt);
     int n = vsnprintf(buf, sizeof(buf), fmt, args);
