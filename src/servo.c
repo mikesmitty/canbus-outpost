@@ -114,6 +114,10 @@ void servo_set_target(int index, uint16_t target, uint8_t throw_time, uint8_t ho
         servo_state[index].step = 0;
         servo_apply_position(index, target);
 
+        /* Arrived already: start the hold countdown, as servo_tick() does
+         * at the end of a timed move */
+        servo_state[index].holding = servo_state[index].hold_ticks > 0;
+
         /* Update frog polarity instantly if configured */
         if (frog_pin > 0 && frog_pin <= 4) {
             uint8_t pins[] = {GPIO_OUT1, GPIO_OUT2, GPIO_OUT3, GPIO_OUT4};
