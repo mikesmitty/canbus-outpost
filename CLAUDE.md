@@ -52,7 +52,7 @@ Work is event-driven (queues, task notifications, FreeRTOS timers, GPIO interrup
 
 ### Application (`src/app/`)
 
-- **config** (`config_layout.h`, `config.c`): the LCC configuration space as a byte image in OpenLCB byte order (big-endian). `config_layout_t` must match the CDI in `cdi_data.c`; `make test` checks it.
+- **config** (`config_layout.h`, `config.c`): the LCC configuration space as a byte image in OpenLCB byte order (big-endian). `config_layout_t` must match the CDI in `cdi_data.c`; `make test` checks it. Writes apply at once and are saved to flash a second after the last one; Update Complete or a reboot saves sooner, and tools don't have to send Update Complete.
 - **turnouts**: servo switch machines (throw/close/center events, feedback, frog output, fascia toggle).
 - **railcom_app**: per track, an Occupied/Clear event pair and locomotive reports in the OpenLCB DCC detector format (a 64K event range per track for JMRI reporters; default reporter IDs are the four unique IDs after the node ID). Track states hold while cutouts are missing (track power off).
 - **identify**, **inputs** (debounced fascia buttons).

@@ -26,6 +26,7 @@ extern const nv_region_t nv_identity_region;
 bool nv_load(const nv_region_t *region, void *buf, size_t size,
              size_t *stored_len, uint16_t *version);
 
+// Save a record, unless the newest one already holds the same data.
 bool nv_save(const nv_region_t *region, const void *buf, size_t len,
              uint16_t version);
 

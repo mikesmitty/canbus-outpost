@@ -1,6 +1,8 @@
 #include "app.h"
 #include <stddef.h>
 #include <string.h>
+#include "FreeRTOS.h"
+#include "timers.h"
 #include "config.h"
 #include "identify.h"
 #include "inputs.h"
@@ -12,7 +14,32 @@
 #include "usb_gridconnect.h"
 #include "util/dbg.h"
 
+// Configuration writes are saved this long after the last one, so a
+// configuration tool's run of writes is one flash save
+#define SAVE_DELAY_MS 1000
+
 static bool id_assigned;
+static TimerHandle_t save_timer;
+static bool save_pending;
+
+static void save(void)
+{
+    xTimerStop(save_timer, 0);
+    save_pending = false;
+    config_save();
+}
+
+static void save_in_task(uint32_t arg)
+{
+    (void)arg;
+    app_config_flush();
+}
+
+static void save_timer_cb(TimerHandle_t t)
+{
+    if (!lcc_task_call(save_in_task, 0))
+        xTimerReset(t, 0);  // the LCC task's queue is full: try again later
+}
 
 static void defaults(config_layout_t *cfg, uint64_t node_id)
 {
@@ -39,6 +66,8 @@ void app_init(uint64_t node_id, bool node_id_assigned)
         DBG(loaded ? "config: new fields set to defaults\n" : "config: using defaults\n");
     }
 
+    save_timer = xTimerCreate("config_save", pdMS_TO_TICKS(SAVE_DELAY_MS), pdFALSE, NULL,
+                              save_timer_cb);
     identify_init();
     inputs_init(turnouts_input_pressed);
     turnouts_init();
@@ -58,13 +87,22 @@ void app_config_written(uint32_t address, uint32_t length)
         turnouts_config_written();
     if (overlaps(address, length, offsetof(config_layout_t, tracks), sizeof(config.tracks)))
         railcom_app_config_written();
+
+    save_pending = true;
+    xTimerReset(save_timer, 0);
+}
+
+void app_config_flush(void)
+{
+    if (save_pending)
+        save();
 }
 
 void app_factory_reset(void)
 {
     DBG("config: factory reset\n");
     defaults(&config, lcc_node_id());
-    config_save();
+    save();
 }
 
 void app_identify_requested(void)
@@ -101,7 +139,7 @@ void app_set_node_id(uint64_t node_id)
     }
     turnouts_migrate_events(&config, lcc_node_id(), node_id);
     railcom_app_migrate_events(&config, lcc_node_id(), node_id);
-    config_save();
+    save();
 
     char last[18];
     node_id_format(node_id + CONFIG_TRACKS, last);

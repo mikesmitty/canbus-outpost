@@ -61,12 +61,14 @@ static void initialized(void)
 static void reboot(void)
 {
     DBG("LCC: rebooting\n");
+    app_config_flush();
     firmware_update_reboot();
 }
 
+// Not required: configuration writes are saved on their own shortly after
 static void update_complete(void)
 {
-    config_save();
+    app_config_flush();
 }
 
 static lcc_memspace_t cdi_space = { .space = LCC_SPACE_CDI };

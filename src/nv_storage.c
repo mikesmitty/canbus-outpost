@@ -109,6 +109,12 @@ bool nv_save(const nv_region_t *region, const void *buf, size_t len,
         return false;
 
     int newest = newest_slot(region);
+    if (newest >= 0) {
+        // Already saved: skip the erase and its time with interrupts off
+        const record_header_t *n = sector_header(region, newest);
+        if (n->version == version && n->length == len && memcmp(n + 1, buf, len) == 0)
+            return true;
+    }
     int slot = newest == 0 ? 1 : 0;
     uint32_t sequence = newest < 0 ? 1 : sector_header(region, newest)->sequence + 1;
 

@@ -15,8 +15,12 @@ void app_init(uint64_t node_id, bool node_id_assigned);
 // At the start of the LCC task, before alias allocation.
 void app_start(void);
 
-// LCC memory configuration wrote to the configuration space.
+// LCC memory configuration wrote to the configuration space. The change
+// applies at once and is saved to flash a second after the last write.
 void app_config_written(uint32_t address, uint32_t length);
+
+// Save configuration writes not yet saved (Update Complete, reboot).
+void app_config_flush(void);
 
 // LCC memory configuration factory reset: back to defaults and save.
 void app_factory_reset(void);
