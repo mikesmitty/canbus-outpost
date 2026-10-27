@@ -329,6 +329,11 @@ static int
 pio_tx_did_fail(struct can2040 *cd)
 {
     pio_hw_t *pio_hw = cd->pio_hw;
+    // Check for a pio reset (pio_sm_setup() after an rx fifo stall) that
+    // halted the "tx" state machine with the transmit still loaded
+    // (canbus-outpost change, not in upstream can2040)
+    if (!(pio_hw->ctrl & (1 << (PIO_CTRL_SM_ENABLE_LSB + SM_TX))))
+        return 1;
     // Check for passive/dominant bit conflict without parser noticing
     if (pio_hw->sm[SM_TX].addr == can2040_offset_tx_conflict)
         return !(pio_hw->intr & SI_RX_DATA);
