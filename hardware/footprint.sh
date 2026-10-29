@@ -15,4 +15,4 @@ if [ ! -d "${REPO_DIR}/hardware/${PROJECT}" ]; then
 fi
 
 cd "${REPO_DIR}/hardware/${PROJECT}"
-easyeda2kicad --full --project-relative --output ./Library --lcsc_id $LCSC_ID
+easyeda2kicad --full --project-relative --output "$PWD/Library" --lcsc_id $LCSC_ID
