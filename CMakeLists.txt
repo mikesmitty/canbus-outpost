@@ -65,7 +65,7 @@ add_executable(canbus-outpost
 )
 
 # x-release-please-start-version
-set(PROJECT_VERSION_BASE "0.3.1")
+set(PROJECT_VERSION_BASE "0.4.0")
 # x-release-please-end
 
 # Get the current git version if available
