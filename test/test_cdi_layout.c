@@ -14,7 +14,7 @@ typedef struct {
     kind_t kind;
 } field_t;
 
-static field_t found[256];
+static field_t found[1024];
 static int nfound;
 
 static unsigned attr(const char *tag_start, const char *name)
@@ -77,6 +77,8 @@ static void walk(void)
                           sizeof(((config_servo_t *)0)->member), kind }
 #define T(member, kind) { offsetof(config_track_t, member), \
                           sizeof(((config_track_t *)0)->member), kind }
+#define H(member, kind) { offsetof(config_head_t, member), \
+                          sizeof(((config_head_t *)0)->member), kind }
 
 int main(void)
 {
@@ -113,8 +115,35 @@ int main(void)
         T(orientation, KIND_INT),
         T(reserved, KIND_STRING),
     };
+    static const field_t chain_fields[] = {
+        F(chain_speed, KIND_INT),
+        F(chain_reserved, KIND_STRING),
+    };
+    static const field_t head_fields[] = {
+        H(description, KIND_STRING),
+        H(aspect_events[0], KIND_EVENTID),
+        H(aspect_events[1], KIND_EVENTID),
+        H(aspect_events[2], KIND_EVENTID),
+        H(aspect_events[3], KIND_EVENTID),
+        H(aspect_events[4], KIND_EVENTID),
+        H(aspect_events[5], KIND_EVENTID),
+        H(aspect_events[6], KIND_EVENTID),
+        H(aspect_events[7], KIND_EVENTID),
+        H(aspect_events[8], KIND_EVENTID),
+        H(aspect_events[9], KIND_EVENTID),
+        H(aspect_events[10], KIND_EVENTID),
+        H(enabled, KIND_INT),
+        H(power_on_aspect, KIND_INT),
+        H(output_lamp[0], KIND_INT),
+        H(output_lamp[1], KIND_INT),
+        H(output_lamp[2], KIND_INT),
+        H(output_brightness[0], KIND_INT),
+        H(output_brightness[1], KIND_INT),
+        H(output_brightness[2], KIND_INT),
+        H(reserved, KIND_STRING),
+    };
 
-    field_t want[256];
+    field_t want[1024];
     int nwant = 0;
     for (size_t i = 0; i < sizeof(node_fields) / sizeof(node_fields[0]); i++)
         want[nwant++] = node_fields[i];
@@ -127,6 +156,13 @@ int main(void)
         for (size_t i = 0; i < sizeof(track_fields) / sizeof(track_fields[0]); i++) {
             want[nwant] = track_fields[i];
             want[nwant++].offset += offsetof(config_layout_t, tracks) + t * sizeof(config_track_t);
+        }
+    for (size_t i = 0; i < sizeof(chain_fields) / sizeof(chain_fields[0]); i++)
+        want[nwant++] = chain_fields[i];
+    for (int h = 0; h < CONFIG_HEADS; h++)
+        for (size_t i = 0; i < sizeof(head_fields) / sizeof(head_fields[0]); i++) {
+            want[nwant] = head_fields[i];
+            want[nwant++].offset += offsetof(config_layout_t, heads) + h * sizeof(config_head_t);
         }
 
     walk();

@@ -12,6 +12,7 @@
 #include "lcc/gridconnect.h"
 #include "lcc_task.h"
 #include "node_id.h"
+#include "ws2811.h"
 
 #define TX_QUEUE_LEN  64
 #define SEND_WAIT_MS  20  // the TX task runs below the LCC task; let it catch up
@@ -91,8 +92,19 @@ static void handle_line(char *line)
             usb_console_printf("nodeid: expected 12 hex digits not starting 00 or FF, "
                                "e.g. nodeid 05.01.01.01.12.34\n");
         }
+    } else if (strncmp(line, "lights", 6) == 0 && (line[6] == 0 || line[6] == ' ')) {
+        unsigned chip, r, g, b;
+        if (sscanf(line + 6, "%u %u %u %u", &chip, &r, &g, &b) == 4 &&
+            chip < WS2811_CHIPS && (r | g | b) <= 255) {
+            ws2811_set(chip, r, g, b);
+            ws2811_show();
+            usb_console_printf("lights: chip %u set to %u %u %u\n", chip, r, g, b);
+        } else {
+            usb_console_printf("lights: expected <chip> <r> <g> <b>, chip 0-%d and the rest "
+                               "0-255, e.g. lights 0 255 0 0\n", WS2811_CHIPS - 1);
+        }
     } else if (strcmp(line, "help") == 0) {
-        usb_console_printf("commands: nodeid, nodeid <id>\n");
+        usb_console_printf("commands: nodeid, nodeid <id>, lights <chip> <r> <g> <b>\n");
     } else {
         usb_console_printf("unknown command '%s' (try help)\n", line);
     }

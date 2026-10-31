@@ -10,6 +10,7 @@
 #include "lcc_task.h"
 #include "node_id.h"
 #include "railcom_app.h"
+#include "signals.h"
 #include "turnouts.h"
 #include "usb_gridconnect.h"
 #include "util/dbg.h"
@@ -47,6 +48,7 @@ static void defaults(config_layout_t *cfg, uint64_t node_id)
     identify_defaults(cfg);
     turnouts_defaults(cfg, node_id);
     railcom_app_defaults(cfg, node_id);
+    signals_defaults(cfg, node_id);
 }
 
 static bool overlaps(uint32_t addr, uint32_t len, size_t start, size_t size)
@@ -72,6 +74,7 @@ void app_init(uint64_t node_id, bool node_id_assigned)
     inputs_init(turnouts_input_pressed);
     turnouts_init();
     railcom_app_init();
+    signals_init();
 }
 
 void app_start(void)
@@ -87,6 +90,9 @@ void app_config_written(uint32_t address, uint32_t length)
         turnouts_config_written();
     if (overlaps(address, length, offsetof(config_layout_t, tracks), sizeof(config.tracks)))
         railcom_app_config_written();
+    if (overlaps(address, length, offsetof(config_layout_t, chain_speed),
+                 sizeof(config) - offsetof(config_layout_t, chain_speed)))
+        signals_config_written();
 
     save_pending = true;
     xTimerReset(save_timer, 0);
@@ -139,6 +145,7 @@ void app_set_node_id(uint64_t node_id)
     }
     turnouts_migrate_events(&config, lcc_node_id(), node_id);
     railcom_app_migrate_events(&config, lcc_node_id(), node_id);
+    signals_migrate_events(&config, lcc_node_id(), node_id);
     save();
 
     char last[18];

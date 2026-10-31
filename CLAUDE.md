@@ -23,7 +23,7 @@ make flash
 make partition-table
 
 # Host-side tests: LCC library, CDI/config layout, RailCom decoder and
-# events, firmware image checks
+# events, signal heads, firmware image checks
 make test
 ```
 
@@ -45,7 +45,8 @@ Custom OpenLCB/LCC implementation in plain C11 with no SDK or RTOS calls: frames
 
 - **lcc_task** (`src/lcc_task.c`): owns the LCC library, the configuration and the application state. Other tasks and interrupts hand it work through its queue (`lcc_task_post_frame`, `lcc_task_call`). It also feeds the hardware watchdog.
 - **can_bus_task** (`src/can_bus.c`): can2040 on PIO1. Received frames go to the LCC task and the USB bridge.
-- **usb_gc_rx_task / usb_gc_tx_task** (`src/usb_gridconnect.c`): GridConnect over USB CDC, plus console commands (`nodeid`).
+- **usb_gc_rx_task / usb_gc_tx_task** (`src/usb_gridconnect.c`): GridConnect over USB CDC, plus console commands (`nodeid`, `lights`).
+- **ws2811_task** (`src/ws2811.c`): sends a frame to the signal lights when asked with `ws2811_show`, and once a second regardless.
 - **railcom_task** (`src/railcom.c`): woken by the CUTOUT_SIGNAL falling edge (GPIO 29); decodes that cutout from the 2 MHz PIO/DMA sample ring (`src/railcom_sample.pio`) for all four blocks (UART line = !(A || B)).
 
 Work is event-driven (queues, task notifications, FreeRTOS timers, GPIO interrupts); avoid polling loops.
@@ -55,12 +56,14 @@ Work is event-driven (queues, task notifications, FreeRTOS timers, GPIO interrup
 - **config** (`config_layout.h`, `config.c`): the LCC configuration space as a byte image in OpenLCB byte order (big-endian). `config_layout_t` must match the CDI in `cdi_data.c`; `make test` checks it. Writes apply at once and are saved to flash a second after the last one; Update Complete or a reboot saves sooner, and tools don't have to send Update Complete.
 - **turnouts**: servo switch machines (throw/close/center events, feedback, frog output, fascia toggle).
 - **railcom_app**: per track, an Occupied/Clear event pair and locomotive reports in the OpenLCB DCC detector format (a 64K event range per track for JMRI reporters; default reporter IDs are the four unique IDs after the node ID). Track states hold while cutouts are missing (track power off).
+- **signals**: up to 16 heads on the WS2811 chain, a head being one chip. Each of its three outputs takes any lamp (red, yellow, green, lunar, or the S, D and speed number of NYC subway time signals), and each lamp has an aspect event, as do flashing red, yellow and green and dark. A head lights one kind of lamp at a time, so lights shown alongside a main aspect take a chip of their own, and the host sends each head its aspect. Heads start disabled, and only the aspects an enabled head can show are on the bus. Flashing heads flash together.
 - **identify**, **inputs** (debounced fascia buttons).
 
 ### Drivers and storage
 
 - **can2040** (`src/can2040.c/h`): PIO-based software CAN controller (third party).
 - **servo** (`src/servo.c/h`): 4-channel PWM servo output at 50 Hz with timed motion.
+- **ws2811** (`src/ws2811.c/h`): the SSSB signal light chain on J15, PIO2 with DMA. It sets each chip's three outputs; which lamp is on which output and what the aspects mean belongs to `src/app/signals.c`. The USB `lights <chip> <r> <g> <b>` command sets a chip directly for bench testing, until the application next updates that chip.
 - **nv_storage** (`src/nv_storage.c/h`): power-safe records (two sectors each, CRC) in the top 16 KB of flash, outside the partitions, for the configuration and the node ID. Read through the untranslated XIP window, since a partition boot maps only that partition.
 - **firmware_update** (`src/firmware_update.c/h`, `src/fw_image.c/h`): LCC firmware upgrades into the A/B partitions of `partition_table.json`. Images are built try-before-you-buy with a SHA-256 hash: a new image runs on trial and confirms itself 5 s after the node comes up; if it resets before then, or hasn't confirmed within 60 s, the next boot returns to the previous one. Without a partition table the node doesn't offer upgrades. Loading firmware over SWD writes at the start of flash and replaces the partition table, so flash with picotool.
 - **node_id** (`src/node_id.c/h`): the LCC node ID, set per board with the `nodeid` USB command from an OpenLCB-assigned range. Until then a locally-allocated stand-in (`0A` prefix, from the chip's device ID) is used, which can't clash with other vendors' IDs. The LCC library checks for another node with the same ID after joining the bus and reports one (well-known event, USB console, fast-blinking identify LED).
@@ -71,6 +74,7 @@ Work is event-driven (queues, task notifications, FreeRTOS timers, GPIO interrup
 
 PIO programs must be `.pio` assembly files (not inline C). They are compiled by `pioasm` as part of the CMake build. Current PIO programs:
 - `src/railcom_sample.pio` — RailCom sampler (16 GPIOs at 2 MHz, DMA to a ring buffer)
+- `src/ws2811.pio` — WS2811 serial output at 400 or 800 kHz, fed by DMA
 
 ### Hardware (`hardware/canbus-outpost/`)
 

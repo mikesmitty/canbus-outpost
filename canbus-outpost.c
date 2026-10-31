@@ -12,6 +12,7 @@
 #include "servo.h"
 #include "usb_gridconnect.h"
 #include "util/dbg.h"
+#include "ws2811.h"
 
 /* ------------------------------------------------------------------ */
 /* Stack overflow hook                                                */
@@ -108,6 +109,7 @@ int main(void)
         assigned ? "" : " (temporary: set one with the 'nodeid' USB command)");
 
     servo_init();
+    ws2811_init();
     lcc_task_init(node_id);
     app_init(node_id, assigned);
     railcom_init();
@@ -118,6 +120,7 @@ int main(void)
     xTaskCreate(can_bus_task, "can", 1024, NULL, 3, NULL);
     xTaskCreate(usb_gc_rx_task, "usb_rx", 1024, NULL, 1, NULL);
     xTaskCreate(usb_gc_tx_task, "usb_tx", 1024, NULL, 1, NULL);
+    xTaskCreate(ws2811_task, "ws2811", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
     /* Highest priority: railcom_task must copy each cutout out of the
      * 4 ms DMA ring before it is overwritten. */
     xTaskCreate(railcom_task, "railcom", 2048, NULL, configMAX_PRIORITIES - 1, NULL);

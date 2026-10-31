@@ -48,6 +48,9 @@
 // must fall within that range.
 #define RC_SAMPLE_BASE_PIN 17
 
+// Signal lights: a WS2811 chain on J15
+#define LIGHTS_PIN 28
+
 // Board identify LED
 #ifndef PICO_DEFAULT_LED_PIN
 #define IDENTIFY_LED_PIN 25

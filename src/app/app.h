@@ -4,8 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// The node's application: switch machines, fascia inputs, identify LED and
-// RailCom reporting, on top of the LCC library. Everything here runs in
+// The node's application: switch machines, fascia inputs, identify LED,
+// RailCom reporting and signal heads, on top of the LCC library. Everything here runs in
 // the LCC task unless noted.
 
 // Before the scheduler starts: load configuration, set outputs to their

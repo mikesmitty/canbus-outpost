@@ -14,4 +14,5 @@ test/test_cdi_layout
 test/test_railcom
 test/test_fw_image
 test/test_railcom_app
+test/test_signals
 *.dSYM/

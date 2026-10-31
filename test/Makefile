@@ -3,7 +3,7 @@ CC     ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O1 -g
 SRC    := ../src
 
-TESTS := test_cdi_layout test_railcom test_fw_image test_railcom_app
+TESTS := test_cdi_layout test_railcom test_fw_image test_railcom_app test_signals
 LCC    := ../lib/lcc
 
 .PHONY: run clean
@@ -26,6 +26,12 @@ test_railcom_app: test_railcom_app.c $(SRC)/app/railcom_app.c $(SRC)/app/railcom
                   $(wildcard $(LCC)/src/*.c $(LCC)/src/*.h $(LCC)/include/lcc/*.h)
 	$(CC) $(CFLAGS) -Imock -I$(SRC) -I$(LCC)/include -o $@ test_railcom_app.c \
 	    $(SRC)/app/railcom_app.c $(wildcard $(LCC)/src/*.c)
+
+# signals.c on the real LCC library, with the WS2811 driver recorded
+test_signals: test_signals.c $(SRC)/app/signals.c $(SRC)/app/signals.h $(SRC)/app/config_layout.h \
+              $(wildcard mock/*.h) $(wildcard $(LCC)/src/*.c $(LCC)/src/*.h $(LCC)/include/lcc/*.h)
+	$(CC) $(CFLAGS) -Imock -I$(SRC) -I$(LCC)/include -o $@ test_signals.c \
+	    $(SRC)/app/signals.c $(wildcard $(LCC)/src/*.c)
 
 clean:
 	rm -f $(TESTS)

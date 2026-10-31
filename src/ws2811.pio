@@ -1,0 +1,56 @@
+.program ws2811
+.side_set 1
+
+; Serial output to a chain of WS2811 chips.
+;
+; Every bit starts high, and the data decides how soon it goes low:
+;   1 = high for T1 + T2, low for T3
+;   0 = high for T1, low for T2 + T3
+;
+; At 10 PIO cycles per bit, the same program suits both chip speeds (datasheet
+; figures in brackets, each +/- 150 ns):
+;
+;   bit rate    high for a 0    high for a 1
+;   400 kHz     500 ns (500)    1250 ns (1200)
+;   800 kHz     250 ns (250)     625 ns (600)
+;
+; The line rests low while the FIFO is empty, which is what latches the chips.
+;
+; Config:
+;   Side-set pin: the data line
+;   Shift: left, autopull at 24 bits (bit 31 first; the low 8 bits are unused)
+;   FIFO: join TX (8-deep)
+;   Clock: clk_sys / (bit rate * 10)
+
+.define public T1 2
+.define public T2 3
+.define public T3 5
+
+.wrap_target
+bitloop:
+    out x, 1        side 0 [T3 - 1]
+    jmp !x do_zero  side 1 [T1 - 1]
+    jmp bitloop     side 1 [T2 - 1]
+do_zero:
+    nop             side 0 [T2 - 1]
+.wrap
+
+% c-sdk {
+static inline float ws2811_clkdiv(uint bit_hz) {
+    return (float)clock_get_hz(clk_sys) / (float)(bit_hz * (ws2811_T1 + ws2811_T2 + ws2811_T3));
+}
+
+static inline void ws2811_program_init(PIO pio, uint sm, uint offset, uint pin, uint bit_hz) {
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+    pio_sm_config c = ws2811_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_out_shift(&c, false, true, 24);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+
+    sm_config_set_clkdiv(&c, ws2811_clkdiv(bit_hz));
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

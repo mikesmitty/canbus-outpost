@@ -52,6 +52,7 @@ add_executable(canbus-outpost
     src/railcom.c
     src/servo.c
     src/usb_gridconnect.c
+    src/ws2811.c
     src/util/dbg.c
     src/app/app.c
     src/app/cdi_data.c
@@ -59,6 +60,7 @@ add_executable(canbus-outpost
     src/app/identify.c
     src/app/inputs.c
     src/app/railcom_app.c
+    src/app/signals.c
     src/app/turnouts.c
 )
 
@@ -89,6 +91,7 @@ pico_set_program_version(canbus-outpost "${GIT_VERSION}")
 
 # Generate PIO headers
 pico_generate_pio_header(canbus-outpost ${CMAKE_CURRENT_LIST_DIR}/src/railcom_sample.pio)
+pico_generate_pio_header(canbus-outpost ${CMAKE_CURRENT_LIST_DIR}/src/ws2811.pio)
 
 # USB CDC for serial I/O, disable UART stdio, enable RTT for debug
 pico_enable_stdio_uart(canbus-outpost 0)
