@@ -45,6 +45,8 @@ void lcc_send_addressed(uint16_t mti, uint16_t dst_alias,
 /* events.c */
 void lcc_events_reset(void);
 void lcc_events_identify_all(void);
+void lcc_events_run_timers(uint32_t now);
+uint32_t lcc_events_next_timer(uint32_t now);
 bool lcc_events_handle(uint16_t mti, const uint8_t *data, uint8_t len);
 
 /* datagram.c */

@@ -503,6 +503,43 @@ static void test_events(void)
 }
 
 static uint64_t range_queried;
+/* A long identify-all goes out in batches, restarting on a new request, so
+ * the node can do other work between them */
+static void test_identify_batches(void)
+{
+    setup();
+    static uint8_t ids[80][8];
+    static lcc_event_t ev[80];
+    for (int i = 0; i < 80; i++) {
+        lcc_put_be64(ids[i], 0x0501010112340100ULL + (uint64_t)i);
+        ev[i] = (lcc_event_t){ .id = ids[i], .on_event = on_event };
+        lcc_event_register(&ev[i]);
+    }
+
+    start_node();
+    CHECK(lcc_ms_until_next_timer(now) <= 50, "no timer for the rest of the announcement");
+    advance(50);
+    advance(50);
+    CHECK(lcc_ms_until_next_timer(now) == LCC_NO_TIMER, "announcement didn't finish");
+    nsent = 0;
+
+    rx_global(LCC_MTI_EVENTS_IDENTIFY_GLOBAL, OTHER, NULL, 0);
+    CHECK(nsent == 32, "first batch: %d frames", nsent);
+    advance(20);
+    CHECK(nsent == 32, "second batch came early: %d frames", nsent);
+    advance(30);
+    CHECK(nsent == 64, "second batch: %d frames", nsent);
+
+    /* A new request starts again from the first event */
+    rx_global(LCC_MTI_EVENTS_IDENTIFY_GLOBAL, OTHER, NULL, 0);
+    CHECK(nsent == 96 && memcmp(sent[64].data, ids[0], 8) == 0, "restart: %d frames", nsent);
+    nsent = 0;
+    advance(50);
+    advance(50);
+    CHECK(nsent == 48 && memcmp(sent[nsent - 1].data, ids[79], 8) == 0, "rest: %d frames", nsent);
+    CHECK(lcc_ms_until_next_timer(now) == LCC_NO_TIMER, "timer left running");
+}
+
 static void range_identify(uintptr_t arg, uint64_t id)
 {
     range_queried = id;
@@ -989,6 +1026,7 @@ int main(void)
     test_snip();
     test_optional_interaction_rejected();
     test_events();
+    test_identify_batches();
     test_producer_ranges();
     test_memconfig_space_info_and_options();
     test_memconfig_read_write();

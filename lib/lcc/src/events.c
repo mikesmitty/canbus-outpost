@@ -11,6 +11,16 @@ static int range_count;
 
 static const uint8_t zero_id[8];
 
+/* An identify-all goes out a batch at a time: the send hook can block while
+ * the bus is busy, and a node with many events still has other traffic to
+ * handle (and a watchdog to feed) during a long one. */
+#define IDENTIFY_BATCH     32
+#define IDENTIFY_BATCH_MS  50
+
+static int identify_pos;       /* next one to send: events, then ranges */
+static bool identifying;       /* more to send */
+static uint32_t identify_next;
+
 static bool id_used(const uint8_t *id)
 {
     return memcmp(id, zero_id, 8) != 0;
@@ -55,6 +65,7 @@ void lcc_events_reset(void)
 {
     event_count = 0;
     range_count = 0;
+    identifying = false;
 }
 
 bool lcc_event_register(const lcc_event_t *event)
@@ -80,16 +91,42 @@ void lcc_producer_send_identified(uint64_t event_id, lcc_event_state_t state)
     lcc_send_global(identified_mti(true, state), buf, 8);
 }
 
+static void identify_batch(void)
+{
+    int total = event_count + range_count;
+    for (int batch = 0; batch < IDENTIFY_BATCH && identify_pos < total; ) {
+        int i = identify_pos++;
+        if (i < event_count) {
+            if (id_used(events[i]->id)) {
+                send_identified(events[i]);
+                batch++;
+            }
+        } else if (range_base(ranges[i - event_count])) {
+            send_range_identified(ranges[i - event_count]);
+            batch++;
+        }
+    }
+    identifying = identify_pos < total;
+    identify_next = lcc_now + IDENTIFY_BATCH_MS;
+}
+
 void lcc_events_identify_all(void)
 {
-    for (int i = 0; i < event_count; i++) {
-        if (id_used(events[i]->id))
-            send_identified(events[i]);
-    }
-    for (int i = 0; i < range_count; i++) {
-        if (range_base(ranges[i]))
-            send_range_identified(ranges[i]);
-    }
+    identify_pos = 0;
+    identify_batch();
+}
+
+void lcc_events_run_timers(uint32_t now)
+{
+    if (identifying && lcc_time_reached(now, identify_next))
+        identify_batch();
+}
+
+uint32_t lcc_events_next_timer(uint32_t now)
+{
+    uint32_t next = LCC_NO_TIMER;
+    lcc_timer_min(&next, identifying, now, identify_next);
+    return next;
 }
 
 static void identify_in_ranges(uint64_t id)

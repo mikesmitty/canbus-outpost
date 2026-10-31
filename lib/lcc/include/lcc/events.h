@@ -11,7 +11,7 @@
  */
 
 #ifndef LCC_MAX_EVENTS
-#define LCC_MAX_EVENTS  48
+#define LCC_MAX_EVENTS  256
 #endif
 
 /* Well-known event: another node is using this node's ID */

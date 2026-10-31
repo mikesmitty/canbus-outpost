@@ -401,8 +401,10 @@ void lcc_run_timers(uint32_t now_ms)
         else
             claim_alias();
     }
-    if (node.state == STATE_PERMITTED)
+    if (node.state == STATE_PERMITTED) {
         lcc_datagram_run_timers(now_ms);
+        lcc_events_run_timers(now_ms);
+    }
     /* The reboot timer runs on after the alias is released */
     if (node.state == STATE_PERMITTED || node.state == STATE_RELEASED)
         lcc_memconfig_run_timers(now_ms);
@@ -415,6 +417,8 @@ uint32_t lcc_ms_until_next_timer(uint32_t now_ms)
     if (node.state == STATE_PERMITTED) {
         uint32_t d = lcc_datagram_next_timer(now_ms);
         if (d < next) next = d;
+        uint32_t e = lcc_events_next_timer(now_ms);
+        if (e < next) next = e;
     }
     if (node.state == STATE_PERMITTED || node.state == STATE_RELEASED) {
         uint32_t m = lcc_memconfig_next_timer(now_ms);
