@@ -189,6 +189,10 @@ int main(void)
         printf("FAIL: CDI space must end with a NUL\n");
         failures++;
     }
+    if (strstr(cdi_xml, "</map><default>")) {
+        printf("FAIL: the CDI schema wants <default> before <map>\n");
+        failures++;
+    }
 
     printf("cdi layout: %d fields checked, %d failed\n", nfound, failures);
     return failures != 0;
