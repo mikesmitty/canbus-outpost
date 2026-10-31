@@ -39,7 +39,7 @@ The firmware runs FreeRTOS on core 0 of the RP2350. The entry point is `canbus-o
 
 ### LCC library (`lib/lcc/`)
 
-Custom OpenLCB/LCC implementation in plain C11 with no SDK or RTOS calls: frames go out through a send hook and time comes in as a millisecond counter, so it builds and is tested on the host (`lib/lcc/test/`). It covers alias allocation and conflict handling, Verify Node ID, Protocol Support, SNIP, an event producer/consumer registry with producer ranges, datagrams (reassembly, rejection, resend), memory configuration, firmware upgrade and GridConnect framing. Public headers are in `lib/lcc/include/lcc/`.
+Custom OpenLCB/LCC implementation in plain C11 with no SDK or RTOS calls: frames go out through a send hook and time comes in as a millisecond counter, so it builds and is tested on the host (`lib/lcc/test/`). It covers alias allocation and conflict handling, Verify Node ID, Protocol Support, SNIP, an event producer/consumer registry with producer ranges (a node's own consumers get the events it sends, on the next run of the timers), datagrams (reassembly, rejection, resend), memory configuration, firmware upgrade and GridConnect framing. Public headers are in `lib/lcc/include/lcc/`.
 
 ### Tasks
 

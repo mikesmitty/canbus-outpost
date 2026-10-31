@@ -21,6 +21,16 @@ static int identify_pos;       /* next one to send: events, then ranges */
 static bool identifying;       /* more to send */
 static uint32_t identify_next;
 
+/* A node doesn't hear its own frames, so its consumers get the events it
+ * sends from here, on the next run of the timers. Not from inside
+ * lcc_event_send: the caller may be part way through a change, and an event
+ * wired back to itself mustn't recurse. A queue that fills up drops what
+ * comes next, on this side only; the bus still gets those events. */
+#define LOCAL_QUEUE_LEN  16
+
+static uint8_t local_queue[LOCAL_QUEUE_LEN][8];
+static int local_head, local_count;
+
 static bool id_used(const uint8_t *id)
 {
     return memcmp(id, zero_id, 8) != 0;
@@ -66,6 +76,8 @@ void lcc_events_reset(void)
     event_count = 0;
     range_count = 0;
     identifying = false;
+    local_head = 0;
+    local_count = 0;
 }
 
 bool lcc_event_register(const lcc_event_t *event)
@@ -116,8 +128,28 @@ void lcc_events_identify_all(void)
     identify_batch();
 }
 
+/* Run every consumer of an event */
+static void consume(const uint8_t *id)
+{
+    for (int i = 0; i < event_count; i++) {
+        const lcc_event_t *ev = events[i];
+        if (!ev->producer && ev->on_event && memcmp(ev->id, id, 8) == 0)
+            ev->on_event(ev->arg);
+    }
+}
+
 void lcc_events_run_timers(uint32_t now)
 {
+    /* Only what's queued now: an event wired back to itself waits its turn,
+     * so the caller's other work still gets a look in */
+    for (int n = local_count; n > 0; n--) {
+        uint8_t id[8];
+        memcpy(id, local_queue[local_head], 8);
+        local_head = (local_head + 1) % LOCAL_QUEUE_LEN;
+        local_count--;
+        consume(id);
+    }
+
     if (identifying && lcc_time_reached(now, identify_next))
         identify_batch();
 }
@@ -126,6 +158,7 @@ uint32_t lcc_events_next_timer(uint32_t now)
 {
     uint32_t next = LCC_NO_TIMER;
     lcc_timer_min(&next, identifying, now, identify_next);
+    lcc_timer_min(&next, local_count > 0, now, now);
     return next;
 }
 
@@ -177,19 +210,18 @@ bool lcc_events_handle(uint16_t mti, const uint8_t *data, uint8_t len)
     } else if (mti == LCC_MTI_CONSUMER_IDENTIFY) {
         identify_matching(data, false);
     } else {
-        for (int i = 0; i < event_count; i++) {
-            const lcc_event_t *ev = events[i];
-            if (!ev->producer && ev->on_event && memcmp(ev->id, data, 8) == 0)
-                ev->on_event(ev->arg);
-        }
+        consume(data);
     }
     return true;
 }
 
 void lcc_event_send(const uint8_t *id)
 {
-    if (lcc_is_initialized() && id_used(id))
-        lcc_send_global(LCC_MTI_EVENT_REPORT, id, 8);
+    if (!lcc_is_initialized() || !id_used(id))
+        return;
+    lcc_send_global(LCC_MTI_EVENT_REPORT, id, 8);
+    if (local_count < LOCAL_QUEUE_LEN)
+        memcpy(local_queue[(local_head + local_count++) % LOCAL_QUEUE_LEN], id, 8);
 }
 
 void lcc_event_send_id(uint64_t event_id)

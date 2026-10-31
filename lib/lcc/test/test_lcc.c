@@ -502,6 +502,133 @@ static void test_events(void)
     CHECK(nsent == 0, "sent an all-zero event");
 }
 
+static const uint8_t *resend_id;
+static uint8_t order[32];
+static int norder;
+static void on_resend(uintptr_t arg)
+{
+    consumed += (int)arg;
+    lcc_event_send(resend_id);
+}
+static void on_ordered(uintptr_t arg) { order[norder++] = (uint8_t)arg; }
+
+/* A node doesn't hear its own frames, so its own consumers are run for it:
+ * after the call, in order, and without recursing */
+static void test_own_events(void)
+{
+    setup();
+    static uint8_t id_a[8], id_b[8], id_loop[8], id_relay[8], id_producer[8], id_zero[8];
+    lcc_put_be64(id_a, 0x0501010112340001ULL);
+    lcc_put_be64(id_b, 0x0501010112340002ULL);
+    lcc_put_be64(id_loop, 0x0501010112340003ULL);
+    lcc_put_be64(id_producer, 0x0501010112340004ULL);
+    lcc_put_be64(id_relay, 0x0501010112340005ULL);
+    static const lcc_event_t relay = { .id = id_relay, .on_event = on_resend, .arg = 1 };
+    static const lcc_event_t relay2 = { .id = id_relay, .on_event = on_event, .arg = 100 };
+    static const lcc_event_t consumer = { .id = id_a, .on_event = on_event, .arg = 1 };
+    static const lcc_event_t consumer2 = { .id = id_a, .on_event = on_event, .arg = 10 };
+    static const lcc_event_t first = { .id = id_a, .on_event = on_ordered, .arg = 1 };
+    static const lcc_event_t second = { .id = id_b, .on_event = on_ordered, .arg = 2 };
+    static const lcc_event_t loop = { .id = id_loop, .on_event = on_resend, .arg = 1 };
+    static const lcc_event_t producer = { .id = id_producer, .producer = true, .on_event = on_event, .arg = 100 };
+    static const lcc_event_t unused = { .id = id_zero, .on_event = on_event, .arg = 100 };
+    lcc_event_register(&consumer);
+    lcc_event_register(&consumer2);
+    lcc_event_register(&first);
+    lcc_event_register(&second);
+    lcc_event_register(&loop);
+    lcc_event_register(&relay);
+    lcc_event_register(&relay2);
+    lcc_event_register(&producer);
+    lcc_event_register(&unused);
+
+    /* Not on the bus yet: nothing goes out, so nothing comes back */
+    consumed = 0;
+    lcc_event_send(id_a);
+    start_node();
+    CHECK(consumed == 0, "ran a consumer for an event never sent: %d", consumed);
+
+    /* On the bus first, then to every consumer here, once */
+    lcc_event_send(id_a);
+    CHECK(nsent == 1 && mti_of(&sent[0]) == LCC_MTI_EVENT_REPORT, "not sent: %d frames", nsent);
+    CHECK(consumed == 0, "consumer ran inside the send");
+    CHECK(lcc_ms_until_next_timer(now) == 0, "no wakeup for the delivery");
+    lcc_run_timers(now);
+    CHECK(consumed == 11, "own consumers: consumed=%d", consumed);
+    CHECK(nsent == 1, "delivery sent frames: %d", nsent);
+    CHECK(lcc_ms_until_next_timer(now) == LCC_NO_TIMER, "timer left running");
+    lcc_run_timers(now);
+    CHECK(consumed == 11, "delivered twice: consumed=%d", consumed);
+
+    /* A producer's event isn't consumed, and an unset ID doesn't exist */
+    consumed = 0;
+    lcc_event_send(id_producer);
+    lcc_event_send(id_zero);
+    lcc_run_timers(now);
+    CHECK(consumed == 0, "ran something that doesn't consume: %d", consumed);
+
+    /* In the order they were sent, from wherever the send came from */
+    norder = 0;
+    lcc_event_send(id_b);
+    lcc_event_send(id_a);
+    lcc_run_timers(now);
+    CHECK(norder == 2 && order[0] == 2 && order[1] == 1, "order: %d %d", order[0], order[1]);
+
+    /* An event wired back to itself comes round once per run, not forever */
+    resend_id = id_loop;
+    consumed = 0;
+    lcc_event_send(id_loop);
+    lcc_run_timers(now);
+    CHECK(consumed == 1, "self-link ran %d times in a run", consumed);
+    lcc_run_timers(now);
+    CHECK(consumed == 2, "self-link stopped: %d", consumed);
+    CHECK(lcc_ms_until_next_timer(now) == 0, "self-link should still be pending");
+    resend_id = id_zero;
+    lcc_run_timers(now);
+    CHECK(lcc_ms_until_next_timer(now) == LCC_NO_TIMER, "self-link left queued");
+
+    /* A full queue costs this node those events, never the bus */
+    consumed = 0;
+    nsent = 0;
+    for (int i = 0; i < 20; i++)
+        lcc_event_send(id_a);
+    CHECK(nsent == 20, "bus got %d of 20", nsent);
+    lcc_run_timers(now);
+    CHECK(consumed == 16 * 11, "delivered %d", consumed / 11);
+    CHECK(lcc_ms_until_next_timer(now) == LCC_NO_TIMER, "queue not empty");
+
+    /* The queue wraps */
+    consumed = 0;
+    for (int i = 0; i < 40; i++) {
+        lcc_event_send(id_a);
+        lcc_event_send(id_b);
+        norder = 0;
+        lcc_run_timers(now);
+        CHECK(norder == 2 && order[0] == 1 && order[1] == 2, "pass %d", i);
+    }
+    CHECK(consumed == 40 * 11, "wrapped queue: %d", consumed);
+
+    /* A consumer that sends while the queue is full takes the slot just
+     * freed, and the event being delivered still reaches the next consumer */
+    resend_id = id_b;
+    consumed = 0;
+    norder = 0;
+    for (int i = 0; i < 16; i++)
+        lcc_event_send(id_relay);
+    lcc_run_timers(now);
+    CHECK(consumed == 16 * 101, "relay: consumed=%d", consumed);
+    lcc_run_timers(now);
+    CHECK(norder == 16, "relayed events: %d", norder);
+
+    /* Starting over forgets what was waiting */
+    lcc_event_send(id_a);
+    setup();
+    lcc_event_register(&consumer);
+    consumed = 0;
+    start_node();
+    CHECK(consumed == 0, "delivered an event from before the restart: %d", consumed);
+}
+
 static uint64_t range_queried;
 /* A long identify-all goes out in batches, restarting on a new request, so
  * the node can do other work between them */
@@ -1026,6 +1153,7 @@ int main(void)
     test_snip();
     test_optional_interaction_rejected();
     test_events();
+    test_own_events();
     test_identify_batches();
     test_producer_ranges();
     test_memconfig_space_info_and_options();

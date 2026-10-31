@@ -66,7 +66,8 @@ bool lcc_producer_range_register(const lcc_producer_range_t *range);
 /* Send Producer Identified Valid/Invalid/Unknown for one event ID. */
 void lcc_producer_send_identified(uint64_t event_id, lcc_event_state_t state);
 
-/* Send an Event Report. */
+/* Send an Event Report. This node's own consumers of the event run on the
+ * next lcc_run_timers(), not during the call. */
 void lcc_event_send(const uint8_t *id);
 void lcc_event_send_id(uint64_t event_id);
 

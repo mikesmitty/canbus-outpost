@@ -7,6 +7,7 @@
 #include "app/config.h"
 #include "app/signals.h"
 #include "lcc/bytes.h"
+#include "lcc/events.h"
 #include "lcc/node.h"
 #include "lcc_task.h"
 #include "timers.h"
@@ -270,6 +271,15 @@ static void test_subway_lights(void)
     }
 }
 
+// A turnout or track on the same board can set a head by sharing an event ID
+static void test_events_from_this_node(void)
+{
+    setup(1);
+    lcc_event_send_id(event(0, CONFIG_ASPECT_GREEN));
+    lcc_run_timers(now);
+    CHECK(chip_is(0, 0, 128, 0), "head ignored an event from its own node");
+}
+
 // Only the aspects a head has lamps for are on the bus, and that follows its wiring
 static void test_events_follow_the_lamps(void)
 {
@@ -392,6 +402,7 @@ int main(int argc, char **argv)
     test_aspects();
     test_lamps_on_outputs();
     test_subway_lights();
+    test_events_from_this_node();
     test_events_follow_the_lamps();
     test_flashing();
     test_enable_and_disable();
