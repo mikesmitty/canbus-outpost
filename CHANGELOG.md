@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.4.0...v0.5.0) (2026-11-07)
+
+
+### Features
+
+* **signals:** let a servo output carry the signal chain ([2d56f5d](https://github.com/mikesmitty/canbus-outpost/commit/2d56f5da1f939cd0892b6da99e7155efdad8fbc6))
+
+
+### Documentation
+
+* **readme:** note that RR-CirKits' heads run at 800 kHz on 5 V ([b13e6cc](https://github.com/mikesmitty/canbus-outpost/commit/b13e6cc4487c3d618020bf4556fc67c73c17c400))
+
 ## [0.4.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.3.1...v0.4.0) (2026-10-31)
 
 
