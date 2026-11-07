@@ -76,9 +76,13 @@ PIO programs must be `.pio` assembly files (not inline C). They are compiled by 
 - `src/railcom_sample.pio` — RailCom sampler (16 GPIOs at 2 MHz, DMA to a ring buffer)
 - `src/ws2811.pio` — WS2811 serial output at 400 or 800 kHz, fed by DMA
 
-### Hardware (`hardware/canbus-outpost/`)
+### Hardware (`hardware/`)
 
-KiCad design files. Key components: RP2350, TLV3202 window comparators and ISO7720 isolators (RailCom detection), RJ45 CAN bus connector. Manufacturing outputs (gerbers, BOM, pick-and-place) are in `production/`. `canbus-outpost.kicad_dru` holds the track-to-logic isolation clearance rule.
+KiCad projects, one directory each:
+- `canbus-outpost/`: the node. Key components: RP2350, TLV3202 window comparators and ISO7720 isolators (RailCom detection), RJ45 CAN bus connector. `canbus-outpost.kicad_dru` holds the track-to-logic isolation clearance rule.
+- `sssb-single/`: a one-head SSSB signal board (WS2811). R1 (33 Ω) is fitted by default; for a head on an old board's servo output, U1 (74AHCT1G125) and C2 are fitted instead, never both.
+
+Each project's `production/` (gerbers, BOM, pick-and-place for JLCPCB) holds what was last ordered, made with `hardware/export.sh <project>` (kikit; JLCPCB_CORRECTION fields fix part rotations). `production/` is gitignored, so add it with `git add -f`.
 
 ### Planning Docs (`conductor/`)
 

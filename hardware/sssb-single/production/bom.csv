@@ -1,0 +1,5 @@
+Comment,Designator,Footprint,LCSC
+100nF,C3,Capacitor_SMD:C_0805_2012Metric,C49678
+33R,"R1,R2",Resistor_SMD:R_0805_2012Metric,C17634
+10uF,C1,Capacitor_SMD:C_0805_2012Metric,C15850
+WS2811,U2,Package_SO:SOIC-8_3.9x4.9mm_P1.27mm,C114581

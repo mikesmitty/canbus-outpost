@@ -10,7 +10,7 @@ An [LCC](https://openlcb.org/) (OpenLCB) node for model railroads, built around 
 
 Everything is set through the node's LCC configuration, so it works with any LCC configuration tool. Signals beyond simple links need a host, such as [Interlock](https://github.com/mikesmitty/interlock).
 
-The hardware is in `hardware/canbus-outpost/` (KiCad), with gerbers, BOM and pick-and-place files in `production/`.
+The hardware is in `hardware/canbus-outpost/`, and a one-head signal board is in `hardware/sssb-single/` (both KiCad), each with gerbers, BOM and pick-and-place files in `production/`.
 
 ## Signal heads
 
@@ -43,10 +43,21 @@ A head lights one kind of lamp at a time, so a light that shows alongside anothe
 
 On boards made before the LED header, a servo output can carry the chain:
 
-1. Buffer the data line to 5 V. The servo outputs come straight from the RP2350 at 3.3 V, short of the 3.5 V a WS2811 on 5 V needs for a high. A 74AHCT125-family buffer powered from the servo header's 5 V does it, followed by a 33 Ω resistor as on the LED header. MOSFET level shifters of the kind sold for I2C are too slow at 800 kHz.
+1. Buffer the data line to 5 V. The servo outputs come straight from the RP2350 at 3.3 V, short of the 3.5 V a WS2811 on 5 V needs for a high. A 74AHCT125-family buffer powered from the servo header's 5 V does it, followed by a 33 Ω resistor as on the LED header. MOSFET level shifters of the kind sold for I2C are too slow at 800 kHz. The [head board](#head-board) can carry the buffer itself.
 2. Set **Connected To** under **Signal Heads** to that servo. Its switch machine is then out of use, as if disabled, and the other three work as usual.
 
 The servo header's 5 V comes straight from the board's regulator, without the LED header's 750 mA fuse, so put a fuse in the adapter.
+
+### Head board
+
+`hardware/sssb-single/` is a board for one head: a WS2811 with IN and OUT headers for the chain and an RGY header for a common-anode head. IN and OUT are S, +, − in servo cable order, the same as the LED header, and RGY is 5V, R, G, Y. SET is open, so it runs at 800 kHz. It hasn't been built yet.
+
+It's assembled one of two ways:
+
+- **R1 fitted** (the default): for a head fed by the LED header or another head.
+- **U1 and C2 fitted, R1 left off**: the head buffers its own input to 5 V, so it can be the first head on a servo output. U1 is a 74AHCT1G125.
+
+Never fit U1 and R1 together: U1's 5 V output would drive back into the pin feeding the chain. The board has no fuse, so on a servo output put one in the cable.
 
 ### Checking a chip
 
