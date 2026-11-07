@@ -19,6 +19,7 @@ static struct {
     bool     moving;        /* True while interpolating toward target */
     bool     holding;       /* True while in post-movement hold period */
     bool     active;        /* True if PWM is outputting a signal */
+    bool     detached;      /* Pin left for other use */
 } servo_state[SERVO_COUNT];
 
 static void servo_apply_position(int index, uint16_t value) {
@@ -59,6 +60,7 @@ void servo_init(void) {
         servo_state[i].moving = false;
         servo_state[i].holding = false;
         servo_state[i].active = false;
+        servo_state[i].detached = false;
 
         DBG("servo_init: ch%d gpio=%d slice=%d chan=%c\n",
             i, servo_pins[i], slice_num, 'A' + channel);
@@ -71,6 +73,15 @@ void servo_disable(int index) {
     servo_state[index].moving = false;
     servo_state[index].holding = false;
     servo_state[index].active = false;
+}
+
+void servo_set_attached(int index, bool attached) {
+    if (index < 0 || index >= SERVO_COUNT || servo_state[index].detached == !attached) return;
+    servo_disable(index);
+    servo_state[index].detached = !attached;
+    if (attached)
+        gpio_set_function(servo_pins[index], GPIO_FUNC_PWM);
+    DBG("servo: ch%d %s\n", index, attached ? "attached" : "detached");
 }
 
 void servo_set_position(int index, uint16_t value) {

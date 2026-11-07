@@ -35,6 +35,7 @@ static int failures, checks;
 static uint8_t chip[WS2811_CHIPS][3];
 static int shows, chip_writes;
 static uint32_t bit_hz;
+static int connector = -1;
 void ws2811_set(int c, uint8_t r, uint8_t g, uint8_t b)
 {
     chip[c][0] = r; chip[c][1] = g; chip[c][2] = b;
@@ -42,6 +43,7 @@ void ws2811_set(int c, uint8_t r, uint8_t g, uint8_t b)
 }
 void ws2811_show(void) { shows++; }
 void ws2811_set_bit_rate(uint32_t hz) { bit_hz = hz; }
+void ws2811_set_connector(int c) { connector = c; }
 
 static lcc_frame_t sent[512];
 static int nsent;
@@ -384,6 +386,18 @@ static void test_chain_speed(void)
     CHECK(bit_hz == WS2811_800KHZ, "chain speed not restored");
 }
 
+static void test_connector(void)
+{
+    setup(1);
+    CHECK(connector == CONFIG_CONNECTOR_LED, "default connector %d", connector);
+    config.chain_connector = CONFIG_CONNECTOR_SERVO1 + 3;
+    signals_config_written();
+    CHECK(connector == 4, "chain not moved to servo 4: %d", connector);
+    config.chain_connector = CONFIG_CONNECTOR_LED;
+    signals_config_written();
+    CHECK(connector == CONFIG_CONNECTOR_LED, "chain not back on the LED header: %d", connector);
+}
+
 static void test_migrate_events(void)
 {
     setup(0);
@@ -407,6 +421,7 @@ int main(int argc, char **argv)
     test_flashing();
     test_enable_and_disable();
     test_chain_speed();
+    test_connector();
     test_migrate_events();
     printf("signals: %d checks, %d failed\n", checks, failures);
     return failures != 0;

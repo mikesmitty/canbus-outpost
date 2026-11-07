@@ -17,6 +17,11 @@ void ws2811_task(void *params);
 
 void ws2811_set_bit_rate(uint32_t bit_hz);
 
+// Where the chain plugs in: 0 is the LED header, 1-4 a servo output
+// for boards made before the header. The chain moves before its next frame;
+// the pin it leaves rests low until something else takes it.
+void ws2811_set_connector(int connector);
+
 // chip counts out from the board. r, g and b are the chip's OUTR, OUTG and
 // OUTB duty, 0 (off) to 255 (full), whatever color is wired to each. Values
 // go out on the next frame; ws2811_show() asks for one now.

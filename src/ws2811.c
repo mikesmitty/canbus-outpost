@@ -9,7 +9,8 @@
 #include "ws2811.pio.h"
 
 // ---------------------------------------------------------------------------
-// WS2811 chain for signal heads, on the SSSB header (J15). Each chip keeps the
+// WS2811 chain for signal heads, on the LED header (J15) or, on boards made
+// before it, a servo output (through a 5 V buffer). Each chip keeps the
 // first 24 bits it sees, passes the rest along, and all of them apply their
 // new values once the line has rested low.
 //
@@ -38,12 +39,18 @@ static TaskHandle_t task;
 static uint sm;
 static uint dma_chan;
 
+// By connector: the LED header, then servo outputs 1-4
+static const uint8_t connector_pins[] = { LIGHTS_PIN, SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN };
+static uint pin;                 // driven by the state machine
+static volatile uint8_t want_pin;
+
 void ws2811_init(void)
 {
     // PIO2 (PIO0 is RailCom's, PIO1 belongs to can2040)
     uint offset = pio_add_program(pio2, &ws2811_program);
     sm = pio_claim_unused_sm(pio2, true);
-    ws2811_program_init(pio2, sm, offset, LIGHTS_PIN, WS2811_800KHZ);
+    pin = want_pin = LIGHTS_PIN;
+    ws2811_program_init(pio2, sm, offset, pin, WS2811_800KHZ);
 
     // DMA: pixels -> PIO TX FIFO, one frame each time it's started
     dma_chan = dma_claim_unused_channel(true);
@@ -57,6 +64,26 @@ void ws2811_init(void)
     pio_sm_set_enabled(pio2, sm, true);
 
     DBG("WS2811: %d chips on GPIO %d\n", WS2811_CHIPS, LIGHTS_PIN);
+}
+
+void ws2811_set_connector(int connector)
+{
+    if (connector < 0 || connector >= (int)sizeof(connector_pins))
+        connector = 0;
+    want_pin = connector_pins[connector];
+}
+
+// Only between frames, while the line rests low. The pin left behind stays
+// low, since the PIO still drives it until another function takes it over.
+static void move_chain(uint new_pin)
+{
+    pio_sm_set_enabled(pio2, sm, false);
+    pio_gpio_init(pio2, new_pin);
+    pio_sm_set_consecutive_pindirs(pio2, sm, new_pin, 1, true);
+    pio_sm_set_sideset_pins(pio2, sm, new_pin);
+    pio_sm_set_enabled(pio2, sm, true);
+    DBG("WS2811: chain moved to GPIO %u\n", new_pin);
+    pin = new_pin;
 }
 
 void ws2811_set_bit_rate(uint32_t bit_hz)
@@ -82,6 +109,8 @@ void ws2811_task(void *params)
     task = xTaskGetCurrentTaskHandle();
 
     for (;;) {
+        if (want_pin != pin)
+            move_chain(want_pin);
         dma_channel_set_read_addr(dma_chan, pixels, true);
         vTaskDelay(pdMS_TO_TICKS(FRAME_MS));
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(REFRESH_MS));

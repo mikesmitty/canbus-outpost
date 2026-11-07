@@ -117,6 +117,7 @@ int main(void)
     };
     static const field_t chain_fields[] = {
         F(chain_speed, KIND_INT),
+        F(chain_connector, KIND_INT),
         F(chain_reserved, KIND_STRING),
     };
     static const field_t head_fields[] = {

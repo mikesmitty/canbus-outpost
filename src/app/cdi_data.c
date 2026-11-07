@@ -209,7 +209,21 @@ const char cdi_xml[] =
     "<relation><property>1</property><value>400 kHz</value></relation>"
     "</map>"
     "</int>"
-    "<string size='3'/>" /* room for more settings */
+    "<int size='1'>"
+    "<name>Connected To</name>"
+    "<description>Where the chain plugs into the board. Boards made before the LED header "
+    "was added can use a servo output instead, with a 5 V buffer on the data line. That "
+    "servo's switch machine is then out of use, as if disabled.</description>"
+    "<default>0</default>"
+    "<map>"
+    "<relation><property>0</property><value>LED header</value></relation>"
+    "<relation><property>1</property><value>Servo 1</value></relation>"
+    "<relation><property>2</property><value>Servo 2</value></relation>"
+    "<relation><property>3</property><value>Servo 3</value></relation>"
+    "<relation><property>4</property><value>Servo 4</value></relation>"
+    "</map>"
+    "</int>"
+    "<string size='2'/>" /* room for more settings */
 
     "<group replication='16'>"
     "<name>Head</name>"

@@ -137,6 +137,7 @@ static bool can_show(const config_head_t *c, int a)
 static void apply_config(void)
 {
     ws2811_set_bit_rate(config.chain_speed == CONFIG_CHAIN_400KHZ ? WS2811_400KHZ : WS2811_800KHZ);
+    ws2811_set_connector(config.chain_connector);
 
     for (int h = 0; h < CONFIG_HEADS; h++) {
         const config_head_t *c = head_cfg(h);
@@ -166,6 +167,7 @@ static uint64_t default_event(uint64_t node_id, int h, int a)
 void signals_defaults(config_layout_t *cfg, uint64_t node_id)
 {
     cfg->chain_speed = CONFIG_CHAIN_800KHZ;
+    cfg->chain_connector = CONFIG_CONNECTOR_LED;
     for (int h = 0; h < CONFIG_HEADS; h++) {
         config_head_t *c = &cfg->heads[h];
         memset(c, 0, sizeof(*c));

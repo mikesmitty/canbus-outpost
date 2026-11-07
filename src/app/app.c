@@ -86,7 +86,8 @@ void app_config_written(uint32_t address, uint32_t length)
 {
     if (overlaps(address, length, offsetof(config_layout_t, identify_enabled), 2))
         identify_apply();
-    if (overlaps(address, length, offsetof(config_layout_t, servos), sizeof(config.servos)))
+    if (overlaps(address, length, offsetof(config_layout_t, servos), sizeof(config.servos)) ||
+        overlaps(address, length, offsetof(config_layout_t, chain_connector), 1))
         turnouts_config_written();
     if (overlaps(address, length, offsetof(config_layout_t, tracks), sizeof(config.tracks)))
         railcom_app_config_written();

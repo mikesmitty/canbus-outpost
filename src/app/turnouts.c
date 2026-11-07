@@ -33,6 +33,18 @@ static const config_servo_t *servo_cfg(int i)
     return &config.servos[i];
 }
 
+// Whether the signal chain has this turnout's servo output
+static bool chain_here(int i)
+{
+    return config.chain_connector == CONFIG_CONNECTOR_SERVO1 + i;
+}
+
+// A turnout works while it's enabled and its servo output is its own
+static bool in_service(int i)
+{
+    return servo_cfg(i)->enabled && !chain_here(i);
+}
+
 static void send_feedback(int i)
 {
     const config_servo_t *s = servo_cfg(i);
@@ -84,7 +96,7 @@ static void move(int i, bool closed, uint8_t throw_time)
 
 static void on_throw(uintptr_t i)
 {
-    if (servo_cfg(i)->enabled) {
+    if (in_service(i)) {
         DBG("turnout %d: throw\n", (int)i + 1);
         move(i, false, servo_cfg(i)->throw_time);
     }
@@ -92,7 +104,7 @@ static void on_throw(uintptr_t i)
 
 static void on_close(uintptr_t i)
 {
-    if (servo_cfg(i)->enabled) {
+    if (in_service(i)) {
         DBG("turnout %d: close\n", (int)i + 1);
         move(i, true, servo_cfg(i)->throw_time);
     }
@@ -101,7 +113,7 @@ static void on_close(uintptr_t i)
 static void on_center(uintptr_t i)
 {
     const config_servo_t *s = servo_cfg(i);
-    if (!s->enabled)
+    if (!in_service(i))
         return;
     DBG("turnout %d: center\n", (int)i + 1);
     // Instant, PWM held, frog untouched: for setting up linkages
@@ -211,9 +223,10 @@ void turnouts_init(void)
 
     for (int i = 0; i < CONFIG_SERVOS; i++) {
         register_events(i);
+        servo_set_attached(i, !chain_here(i));
 
         const config_servo_t *s = servo_cfg(i);
-        if (!s->enabled || s->default_state == CONFIG_DEFAULT_NO_CHANGE)
+        if (!in_service(i) || s->default_state == CONFIG_DEFAULT_NO_CHANGE)
             continue;  // PWM stays off; position unknown until commanded
         move(i, s->default_state == CONFIG_DEFAULT_CLOSED, 0);
     }
@@ -222,7 +235,8 @@ void turnouts_init(void)
 void turnouts_config_written(void)
 {
     for (int i = 0; i < CONFIG_SERVOS; i++) {
-        if (!servo_cfg(i)->enabled) {
+        servo_set_attached(i, !chain_here(i));
+        if (!in_service(i)) {
             servo_disable(i);
             state[i].known = false;
         }
@@ -233,7 +247,7 @@ void turnouts_input_pressed(int input)
 {
     for (int i = 0; i < CONFIG_SERVOS; i++) {
         const config_servo_t *s = servo_cfg(i);
-        if (s->enabled && s->fascia_input == input) {
+        if (in_service(i) && s->fascia_input == input) {
             DBG("turnout %d: fascia input %d\n", i + 1, input);
             move(i, !state[i].closed, s->throw_time);
         }

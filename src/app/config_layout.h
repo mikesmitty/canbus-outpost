@@ -100,7 +100,8 @@ typedef struct {
     config_track_t tracks[CONFIG_TRACKS];
     // Segment "Signal Heads", origin 996
     uint8_t chain_speed;     // CONFIG_CHAIN_*
-    uint8_t chain_reserved[3];
+    uint8_t chain_connector; // CONFIG_CONNECTOR_*
+    uint8_t chain_reserved[2];
     config_head_t heads[CONFIG_HEADS];
 } config_layout_t;
 
@@ -115,6 +116,11 @@ typedef struct {
 
 #define CONFIG_CHAIN_800KHZ  0
 #define CONFIG_CHAIN_400KHZ  1
+
+// Where the signal chain plugs in: the LED header, or on boards made before
+// it, a servo output (servo n is CONFIG_CONNECTOR_SERVO1 + n - 1)
+#define CONFIG_CONNECTOR_LED     0
+#define CONFIG_CONNECTOR_SERVO1  1
 
 _Static_assert(sizeof(config_servo_t) == 120, "servo group stride must match the CDI");
 _Static_assert(offsetof(config_layout_t, identify_enabled) == 128, "Identify segment origin");

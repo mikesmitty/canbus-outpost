@@ -15,9 +15,9 @@ The hardware is in `hardware/canbus-outpost/` (KiCad), with gerbers, BOM and pic
 ## Signal heads
 
 > [!NOTE]
-> The signal chain hasn't been run on hardware yet; so far the firmware has only passed host tests. Boards made before commit 7316e79 have no signal header.
+> The signal chain hasn't been run on hardware yet; so far the firmware has only passed host tests. Boards made before commit 7316e79 have no LED header, but can use a servo output instead: see [Boards without an LED header](#boards-without-an-led-header).
 
-The board speaks [RR-CirKits](https://www.rr-cirkits.com/)' Simple Serial Signal Bus (SSSB) on J15: one WS2811 chip per head, daisy-chained with Futaba J servo cables. J15 supplies 5 V through a 750 mA fuse. Head 1 is the first on the cable, and every chip has to be connected for the ones after it to work, enabled or not. WS2811 outputs only sink current, so heads need common-anode LEDs.
+The board speaks [RR-CirKits](https://www.rr-cirkits.com/)' Simple Serial Signal Bus (SSSB) on the LED header: one WS2811 chip per head, daisy-chained with Futaba J servo cables. The LED header supplies 5 V through a 750 mA fuse. Head 1 is the first on the cable, and every chip has to be connected for the ones after it to work, enabled or not. WS2811 outputs only sink current, so heads need common-anode LEDs.
 
 ### Setting up a head
 
@@ -38,6 +38,17 @@ Each aspect has its own event, and only the aspects a head has lamps for are on 
 | S, D, Number | the lit letters and speed number of NYC subway time signals |
 
 A head lights one kind of lamp at a time, so a light that shows alongside another, like lunar under a red, takes a chip of its own: for example head 1 as red/yellow/green and head 2 as lunar/S/D.
+
+### Boards without an LED header
+
+On boards made before the LED header, a servo output can carry the chain:
+
+1. Buffer the data line to 5 V. The servo outputs come straight from the RP2350 at 3.3 V, short of the 3.5 V a WS2811 on 5 V needs for a high. A 74AHCT125-family buffer powered from the servo header's 5 V does it, followed by a 33 Ω resistor as on the LED header. MOSFET level shifters of the kind sold for I2C are too slow at 800 kHz.
+2. Set **Connected To** under **Signal Heads** to that servo. Its switch machine is then out of use, as if disabled, and the other three work as usual.
+
+The servo header's 5 V comes straight from the board's regulator, without the LED header's 750 mA fuse, so put a fuse in the adapter.
+
+### Checking a chip
 
 To check a chip without LCC, the USB console's `lights <chip> <r> <g> <b>` sets its outputs directly until the application next updates that chip. Chips count from 0 here.
 

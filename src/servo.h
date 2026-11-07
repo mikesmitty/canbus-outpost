@@ -12,6 +12,11 @@ void servo_set_position(int index, uint16_t value); // 0-65535, instant move
 void servo_set_pulse_us(int index, uint16_t us);    // direct pulse width in microseconds
 void servo_disable(int index);                       // 0% duty — no signal, no power draw
 
+/* Detached, a servo's pin is left free for other use (the signal chain, on
+ * boards without an LED header): PWM stops and the servo no longer has the
+ * pin. Attaching takes the pin back with PWM off. Servos start attached. */
+void servo_set_attached(int index, bool attached);
+
 /* Smooth movement API.
  * throw_time: duration in tenths of seconds (0=instant, 1-255 = 0.1-25.5s)
  * hold_time: seconds to hold position after arrival before cutting PWM (0=hold forever)

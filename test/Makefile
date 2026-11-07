@@ -3,7 +3,7 @@ CC     ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O1 -g
 SRC    := ../src
 
-TESTS := test_cdi_layout test_railcom test_fw_image test_railcom_app test_signals
+TESTS := test_cdi_layout test_railcom test_fw_image test_railcom_app test_signals test_turnouts
 LCC    := ../lib/lcc
 
 .PHONY: run clean
@@ -32,6 +32,12 @@ test_signals: test_signals.c $(SRC)/app/signals.c $(SRC)/app/signals.h $(SRC)/ap
               $(wildcard mock/*.h) $(wildcard $(LCC)/src/*.c $(LCC)/src/*.h $(LCC)/include/lcc/*.h)
 	$(CC) $(CFLAGS) -Imock -I$(SRC) -I$(LCC)/include -o $@ test_signals.c \
 	    $(SRC)/app/signals.c $(wildcard $(LCC)/src/*.c)
+
+# turnouts.c on the real LCC library, with the servo driver recorded
+test_turnouts: test_turnouts.c $(SRC)/app/turnouts.c $(SRC)/app/turnouts.h $(SRC)/app/config_layout.h \
+               $(SRC)/servo.h $(wildcard mock/*.h) $(wildcard $(LCC)/src/*.c $(LCC)/src/*.h $(LCC)/include/lcc/*.h)
+	$(CC) $(CFLAGS) -Imock -I$(SRC) -I$(LCC)/include -o $@ test_turnouts.c \
+	    $(SRC)/app/turnouts.c $(wildcard $(LCC)/src/*.c)
 
 clean:
 	rm -f $(TESTS)
