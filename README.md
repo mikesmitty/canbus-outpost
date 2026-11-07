@@ -15,7 +15,7 @@ The hardware is in `hardware/canbus-outpost/` (KiCad), with gerbers, BOM and pic
 ## Signal heads
 
 > [!NOTE]
-> The signal chain hasn't been run on hardware yet. The firmware passes its host tests, but the chain speed and supply voltage of RR-CirKits' heads still need measuring. Boards made before commit 7316e79 have no signal header.
+> The signal chain hasn't been run on hardware yet; so far the firmware has only passed host tests. Boards made before commit 7316e79 have no signal header.
 
 The board speaks [RR-CirKits](https://www.rr-cirkits.com/)' Simple Serial Signal Bus (SSSB) on J15: one WS2811 chip per head, daisy-chained with Futaba J servo cables. J15 supplies 5 V through a 750 mA fuse. Head 1 is the first on the cable, and every chip has to be connected for the ones after it to work, enabled or not. WS2811 outputs only sink current, so heads need common-anode LEDs.
 
@@ -23,7 +23,7 @@ The board speaks [RR-CirKits](https://www.rr-cirkits.com/)' Simple Serial Signal
 
 Heads start disabled, since the board can't tell which are fitted. Under **Signal Heads** in the configuration:
 
-1. Set **Chain Speed** to match the chips' SET pin: 800 kHz when open, 400 kHz when tied to power.
+1. Set **Chain Speed** to match the chips' SET pin: 800 kHz when open, 400 kHz when tied to power. RR-CirKits' heads leave it open, so they run at the default of 800 kHz.
 2. Set the head's **Enabled**.
 3. Set the lamp on each output. The defaults are red, green and yellow on OUTR, OUTG and OUTB, which is the SSSB wiring. Each output also has its own brightness.
 
