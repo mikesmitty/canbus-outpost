@@ -24,7 +24,7 @@ const char cdi_xml[] =
     "<model>CAN Bus Outpost</model>"
     "<hardwareVersion>Rev A</hardwareVersion>"
     "<!-- x-release-please-start-version -->"
-    "<softwareVersion>0.5.0</softwareVersion>"
+    "<softwareVersion>0.6.0</softwareVersion>"
     "<!-- x-release-please-end -->"
     "</identification>"
 

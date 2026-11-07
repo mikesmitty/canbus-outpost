@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.5.0...v0.6.0) (2026-11-07)
+
+
+### Features
+
+* **hardware:** add sssb-single signal head board ([dba046b](https://github.com/mikesmitty/canbus-outpost/commit/dba046b9ab84c18763004100b3e37501ef4a0354))
+
 ## [0.5.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.4.0...v0.5.0) (2026-11-07)
 
 
