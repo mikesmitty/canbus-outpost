@@ -91,10 +91,10 @@ void ws2811_set_bit_rate(uint32_t bit_hz)
     pio_sm_set_clkdiv(pio2, sm, ws2811_clkdiv(bit_hz));
 }
 
-void ws2811_set(int chip, uint8_t r, uint8_t g, uint8_t b)
+void ws2811_set(int chip, uint8_t r, uint8_t g, uint8_t y)
 {
     if (chip < 0 || chip >= WS2811_CHIPS) return;
-    pixels[chip] = (uint32_t)r << 24 | (uint32_t)g << 16 | (uint32_t)b << 8;
+    pixels[chip] = (uint32_t)r << 24 | (uint32_t)g << 16 | (uint32_t)y << 8;
 }
 
 void ws2811_show(void)

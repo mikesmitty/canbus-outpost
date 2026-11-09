@@ -8,6 +8,7 @@
 #include "pico/stdio.h"
 #include "pico/stdio_usb.h"
 #include "app/app.h"
+#include "app/signals.h"
 #include "can_bus.h"
 #include "lcc/gridconnect.h"
 #include "lcc_task.h"
@@ -78,6 +79,28 @@ static void set_node_id(uint32_t arg)
     app_set_node_id(pending_node_id);
 }
 
+static void toggle_signal_test(uint32_t arg)
+{
+    (void)arg;
+    bool on = !signals_testing();
+    signals_test(on);
+    if (on)
+        usb_console_printf("lights: testing, every chip lights red, yellow, green, then none, "
+                           "a second each; lights test again to stop\n");
+    else
+        usb_console_printf("lights: test over, heads back on their aspects\n");
+}
+
+// Ends a signal test first, which would otherwise cover it a second later.
+// arg is the chip, then the OUTR, OUTG and OUTB bytes (red, green and yellow
+// on SSSB wiring).
+static void set_chip(uint32_t arg)
+{
+    signals_test(false);
+    ws2811_set((int)(arg >> 24), (uint8_t)(arg >> 16), (uint8_t)(arg >> 8), (uint8_t)arg);
+    ws2811_show();
+}
+
 static void handle_line(char *line)
 {
     if (strncmp(line, "nodeid", 6) == 0 && (line[6] == 0 || line[6] == ' ')) {
@@ -93,18 +116,20 @@ static void handle_line(char *line)
                                "e.g. nodeid 05.01.01.01.12.34\n");
         }
     } else if (strncmp(line, "lights", 6) == 0 && (line[6] == 0 || line[6] == ' ')) {
-        unsigned chip, r, g, b;
-        if (sscanf(line + 6, "%u %u %u %u", &chip, &r, &g, &b) == 4 &&
-            chip < WS2811_CHIPS && (r | g | b) <= 255) {
-            ws2811_set(chip, r, g, b);
-            ws2811_show();
-            usb_console_printf("lights: chip %u set to %u %u %u\n", chip, r, g, b);
+        unsigned chip, r, y, g;
+        if (strcmp(line + 6, " test") == 0) {
+            lcc_task_call(toggle_signal_test, 0);
+        } else if (sscanf(line + 6, "%u %u %u %u", &chip, &r, &y, &g) == 4 &&
+                   chip < WS2811_CHIPS && (r | y | g) <= 255) {
+            lcc_task_call(set_chip, chip << 24 | r << 16 | g << 8 | y);
+            usb_console_printf("lights: chip %u set to red %u, yellow %u, green %u\n", chip, r, y, g);
         } else {
-            usb_console_printf("lights: expected <chip> <r> <g> <b>, chip 0-%d and the rest "
-                               "0-255, e.g. lights 0 255 0 0\n", WS2811_CHIPS - 1);
+            usb_console_printf("lights: expected test, or <chip> <r> <y> <g> with chip 0-%d and "
+                               "red, yellow and green 0-255, e.g. lights 0 255 0 0\n",
+                               WS2811_CHIPS - 1);
         }
     } else if (strcmp(line, "help") == 0) {
-        usb_console_printf("commands: nodeid, nodeid <id>, lights <chip> <r> <g> <b>\n");
+        usb_console_printf("commands: nodeid, nodeid <id>, lights <chip> <r> <y> <g>, lights test\n");
     } else {
         usb_console_printf("unknown command '%s' (try help)\n", line);
     }

@@ -1,6 +1,7 @@
 #ifndef SIGNALS_H
 #define SIGNALS_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "config_layout.h"
 
@@ -13,6 +14,13 @@ void signals_defaults(config_layout_t *cfg, uint64_t node_id);
 void signals_init(void);
 
 void signals_config_written(void);
+
+// Signal test: every chip on the chain, configured or not, lights red,
+// yellow and green in turn (on SSSB wiring), then none, a second each, until
+// it's turned off. The heads go back to their aspects then, having followed
+// their events all along.
+void signals_test(bool on);
+bool signals_testing(void);
 
 // Default event IDs are derived from the node ID; move any still at their
 // default from old_id's range to new_id's.

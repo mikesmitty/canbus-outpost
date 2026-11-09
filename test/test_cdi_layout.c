@@ -141,7 +141,13 @@ int main(void)
         H(output_brightness[0], KIND_INT),
         H(output_brightness[1], KIND_INT),
         H(output_brightness[2], KIND_INT),
+        H(lamp_fade, KIND_INT),
+        H(chain_position, KIND_INT),
         H(reserved, KIND_STRING),
+    };
+    static const field_t test_fields[] = {
+        F(test_start_event, KIND_EVENTID),
+        F(test_stop_event, KIND_EVENTID),
     };
 
     field_t want[1024];
@@ -165,6 +171,8 @@ int main(void)
             want[nwant] = head_fields[i];
             want[nwant++].offset += offsetof(config_layout_t, heads) + h * sizeof(config_head_t);
         }
+    for (size_t i = 0; i < sizeof(test_fields) / sizeof(test_fields[0]); i++)
+        want[nwant++] = test_fields[i];
 
     walk();
 

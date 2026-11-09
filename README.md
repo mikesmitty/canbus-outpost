@@ -17,7 +17,7 @@ The hardware is in `hardware/canbus-outpost/`, and a one-head signal board is in
 > [!NOTE]
 > The signal chain hasn't been run on hardware yet; so far the firmware has only passed host tests. Boards made before commit 7316e79 have no LED header, but can use a servo output instead: see [Boards without an LED header](#boards-without-an-led-header).
 
-The board speaks [RR-CirKits](https://www.rr-cirkits.com/)' Simple Serial Signal Bus (SSSB) on the LED header: one WS2811 chip per head, daisy-chained with Futaba J servo cables. The LED header supplies 5 V through a 750 mA fuse. Head 1 is the first on the cable, and every chip has to be connected for the ones after it to work, enabled or not. WS2811 outputs only sink current, so heads need common-anode LEDs.
+The board speaks [RR-CirKits](https://www.rr-cirkits.com/)' Simple Serial Signal Bus (SSSB) on the LED header: one WS2811 chip per head, daisy-chained with Futaba J servo cables. The LED header supplies 5 V through a 750 mA fuse. Head 1 is the first on the cable unless its **Chain Position** says otherwise, and every chip has to be connected for the ones after it to work, in use or not. WS2811 outputs only sink current, so heads need common-anode LEDs.
 
 ### Setting up a head
 
@@ -26,6 +26,9 @@ Heads start disabled, since the board can't tell which are fitted. Under **Signa
 1. Set **Chain Speed** to match the chips' SET pin: 800 kHz when open, 400 kHz when tied to power. RR-CirKits' heads leave it open, so they run at the default of 800 kHz.
 2. Set the head's **Enabled**.
 3. Set the lamp on each output. The defaults are red, green and yellow on OUTR, OUTG and OUTB, which is the SSSB wiring. Each output also has its own brightness.
+4. Optionally, set **Lamp Fade** to Incandescent. The lamps then warm up over 150 ms and cool down over 300 ms, like ballasted bulbs, instead of switching at once. Flashing aspects fade too.
+
+To add a chip partway along the chain, set the **Chain Position** of each head after it to one more than its number, instead of setting those heads up again on their new numbers. 0, the default, means the head's own number. Two heads on one chip both show on it.
 
 Each aspect has its own event, and only the aspects a head has lamps for are on the bus:
 
@@ -59,9 +62,11 @@ It's assembled one of two ways:
 
 Never fit U1 and R1 together: U1's 5 V output would drive back into the pin feeding the chain. The board has no fuse, so on a servo output put one in the cable.
 
-### Checking a chip
+### Checking the chain
 
-To check a chip without LCC, the USB console's `lights <chip> <r> <g> <b>` sets its outputs directly until the application next updates that chip. Chips count from 0 here.
+**Signal Test**, at the end of **Signal Heads**, has a Start and a Stop event. From Start until Stop, every chip on the chain, set up or not, lights red, yellow and green in turn and then none, a second each (OUTR, OUTB and OUTG, as SSSB heads are wired). The heads still follow their events meanwhile, and go back to their aspects at Stop. Each node has its own pair by default; give every node the same pair to test all the chains on the layout at once.
+
+On the USB console, `lights test` does the same until `lights test` again, and `lights <chip> <r> <y> <g>` sets one chip's red, yellow and green directly until the application next updates that chip, ending any test. Chips count from 0 here.
 
 ### What to expect from a host
 

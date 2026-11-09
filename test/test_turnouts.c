@@ -17,8 +17,8 @@ void dbg_printf(const char *fmt, ...) { if (!verbose) return; va_list a; va_star
 bool lcc_task_call(lcc_task_fn_t fn, uint32_t arg) { fn(arg); return true; }
 
 config_layout_t config;
-TimerCallbackFunction_t mock_timer_cb;
-bool mock_timer_active;
+struct mock_timer mock_timers[MOCK_TIMERS];
+int mock_ntimers;
 
 static int failures, checks;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; \

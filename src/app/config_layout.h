@@ -83,7 +83,9 @@ typedef struct {
     uint8_t power_on_aspect;       // CONFIG_ASPECT_*
     uint8_t output_lamp[3];        // CONFIG_LAMP_* on OUTR, OUTG and OUTB
     uint8_t output_brightness[3];
-    uint8_t reserved[8];
+    uint8_t lamp_fade;             // CONFIG_FADE_*
+    uint8_t chain_position;        // chip on the chain, 1-16; 0 = the head's own number
+    uint8_t reserved[6];
 } config_head_t;
 
 typedef struct {
@@ -103,6 +105,9 @@ typedef struct {
     uint8_t chain_connector; // CONFIG_CONNECTOR_*
     uint8_t chain_reserved[2];
     config_head_t heads[CONFIG_HEADS];
+    // Still "Signal Heads", after the heads
+    uint8_t test_start_event[8];
+    uint8_t test_stop_event[8];
 } config_layout_t;
 
 #define CONFIG_DEFAULT_THROWN     0
@@ -117,6 +122,11 @@ typedef struct {
 #define CONFIG_CHAIN_800KHZ  0
 #define CONFIG_CHAIN_400KHZ  1
 
+// How a head's lamps change: at once, or warming and cooling like
+// incandescent bulbs
+#define CONFIG_FADE_NONE          0
+#define CONFIG_FADE_INCANDESCENT  1
+
 // Where the signal chain plugs in: the LED header, or on boards made before
 // it, a servo output (servo n is CONFIG_CONNECTOR_SERVO1 + n - 1)
 #define CONFIG_CONNECTOR_LED     0
@@ -129,6 +139,7 @@ _Static_assert(sizeof(config_track_t) == 96, "track group stride must match the 
 _Static_assert(offsetof(config_layout_t, tracks) == 612, "RailCom Detectors segment origin");
 _Static_assert(sizeof(config_head_t) == 136, "head group stride must match the CDI");
 _Static_assert(offsetof(config_layout_t, chain_speed) == 996, "Signal Heads segment origin");
-_Static_assert(sizeof(config_layout_t) == 3176, "configuration space size");
+_Static_assert(offsetof(config_layout_t, test_start_event) == 3176, "Signal Test after the heads");
+_Static_assert(sizeof(config_layout_t) == 3192, "configuration space size");
 
 #endif // CONFIG_LAYOUT_H
