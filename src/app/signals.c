@@ -10,11 +10,20 @@
 #include "ws2811.h"
 
 _Static_assert(CONFIG_HEADS == WS2811_CHIPS, "one head per chip on the chain");
-_Static_assert(5 * CONFIG_SERVOS + 2 * CONFIG_TRACKS + CONFIG_ASPECTS * CONFIG_HEADS + 2 <= LCC_MAX_EVENTS,
+_Static_assert(5 * CONFIG_SERVOS + 2 * CONFIG_TRACKS + CONFIG_ASPECTS * CONFIG_HEADS + 2 +
+               6 * CONFIG_HEADS <= LCC_MAX_EVENTS,
                "every event needs a place in the LCC library's registry");
 
-// Half a second on, half a second off: 60 flashes a minute
-#define FLASH_MS 500
+// Flashing counts ticks of a twelfth of a second. A rate is lit for a
+// number of them, then dark for as many: 6 for 60 flashes a minute, 9 for
+// 40 and 4 for 90. Every rate's cycle fits 72 ticks evenly.
+#define FLASH_TICK_MS  83
+#define FLASH_CYCLE    72
+static const uint8_t flash_half[] = {
+    [CONFIG_FLASH_MEDIUM] = 6,
+    [CONFIG_FLASH_SLOW]   = 9,
+    [CONFIG_FLASH_FAST]   = 4,
+};
 
 // Incandescent fade. A lamp's heat runs from 0 (cold) to HEAT_MAX (full),
 // in a straight line over WARM_MS lighting or COOL_MS going out, and its
@@ -31,7 +40,7 @@ _Static_assert(5 * CONFIG_SERVOS + 2 * CONFIG_TRACKS + CONFIG_ASPECTS * CONFIG_H
 #define TEST_BRIGHTNESS  128
 
 // The output each test step lights: red, yellow and green on SSSB wiring
-// (OUTR, OUTB, OUTG), then none
+// (outputs R, Y and G), then none
 static const int8_t test_outputs[] = { 0, 2, 1, -1 };
 #define TEST_STEPS ((int)sizeof(test_outputs))
 
@@ -57,9 +66,14 @@ static bool enabled[CONFIG_HEADS];    // as last applied
 static uint16_t heat[CONFIG_HEADS][3];
 static uint8_t shown[WS2811_CHIPS][3];  // what the heads last gave the chain
 
-// Runs while any head is flashing; flashing heads all flash together
+// Runs while any head is flashing. Heads count the same ticks, so heads at
+// one rate flash together.
 static TimerHandle_t flash_timer;
-static bool flash_lit;
+static uint8_t flash_count;
+
+// Outputs set to their own events: on or off. Off on any other output and
+// while the head is disabled.
+static bool lamp_on[CONFIG_HEADS][3];
 
 // Runs while any lamp is warming or cooling
 static TimerHandle_t fade_timer;
@@ -69,6 +83,7 @@ static bool testing;
 static int test_step;
 
 static lcc_event_t events[CONFIG_HEADS][CONFIG_ASPECTS];
+static lcc_event_t lamp_events[CONFIG_HEADS][3][2];  // on, off
 static lcc_event_t test_events[2];  // start, stop
 static const uint8_t no_event[8];  // the library skips all-zero IDs
 
@@ -83,13 +98,25 @@ static int chip_of(int h)
     return pos >= 1 && pos <= WS2811_CHIPS ? (int)pos - 1 : h;
 }
 
+// Whether a lamp flashing at the head's rate in this phase is lit now
+static bool flash_lit(int h, int out)
+{
+    uint8_t rate = head_cfg(h)->flash_rate;
+    unsigned half = flash_half[rate < sizeof(flash_half) ? rate : CONFIG_FLASH_MEDIUM];
+    bool phase_a = (flash_count / half) % 2 == 0;
+    return phase_a != (head_cfg(h)->output_phase[out] == CONFIG_PHASE_B);
+}
+
 // Whether a head's output should be lit right now. Every output with the
 // aspect's lamp lights, so a lamp can take more than one.
 static bool lit(int h, int out)
 {
+    uint8_t output = head_cfg(h)->output_lamp[out];
+    if (output == CONFIG_LAMP_OWN)
+        return lamp_on[h][out];
     uint8_t lamp = aspects[aspect[h]].lamp;
-    return lamp != CONFIG_LAMP_NONE && head_cfg(h)->output_lamp[out] == lamp &&
-           (!aspects[aspect[h]].flashing || flash_lit);
+    return lamp != CONFIG_LAMP_NONE && output == lamp &&
+           (!aspects[aspect[h]].flashing || flash_lit(h, out));
 }
 
 // Bring each lamp's heat toward lit or dark: at once on a head without fade,
@@ -182,7 +209,7 @@ static void update_flash_timer(void)
     if (!flashing) {
         xTimerStop(flash_timer, 0);
     } else if (!xTimerIsTimerActive(flash_timer)) {
-        flash_lit = true;
+        flash_count = 0;  // phase A lamps start lit
         xTimerStart(flash_timer, 0);
     }
 }
@@ -190,7 +217,7 @@ static void update_flash_timer(void)
 static void flash_tick(uint32_t arg)
 {
     (void)arg;
-    flash_lit = !flash_lit;
+    flash_count = (flash_count + 1) % FLASH_CYCLE;
     update(false);
 }
 
@@ -285,16 +312,38 @@ static lcc_event_state_t aspect_state(uintptr_t arg)
     return aspect[arg_head(arg)] == arg_aspect(arg) ? LCC_EVENT_VALID : LCC_EVENT_INVALID;
 }
 
+// An own event's argument is its head, output and whether it's the On event
+static uintptr_t lamp_arg(int h, int out, bool on) { return (uintptr_t)((h * 3 + out) * 2 + on); }
+static int lamp_head(uintptr_t arg) { return (int)(arg / 6); }
+static int lamp_output(uintptr_t arg) { return (int)(arg / 2 % 3); }
+static bool lamp_is_on(uintptr_t arg) { return arg % 2 != 0; }
+
+static void on_lamp(uintptr_t arg)
+{
+    static const char *const names[] = { "R", "G", "Y" };
+    int h = lamp_head(arg), out = lamp_output(arg);
+    DBG("signal head %d: output %s %s\n", h + 1, names[out], lamp_is_on(arg) ? "on" : "off");
+    lamp_on[h][out] = lamp_is_on(arg);
+    update(false);
+}
+
+static lcc_event_state_t lamp_state(uintptr_t arg)
+{
+    return lamp_on[lamp_head(arg)][lamp_output(arg)] == lamp_is_on(arg) ? LCC_EVENT_VALID
+                                                                        : LCC_EVENT_INVALID;
+}
+
 // ------------------------------------------------------------------
 // Configuration
 // ------------------------------------------------------------------
 
+// Dark, on a head with any lamp the aspects light
 static bool can_show(const config_head_t *c, int a)
 {
-    if (a == CONFIG_ASPECT_DARK)
-        return true;
     for (int i = 0; i < 3; i++) {
-        if (c->output_lamp[i] == aspects[a].lamp)
+        uint8_t lamp = c->output_lamp[i];
+        if (a == CONFIG_ASPECT_DARK ? lamp != CONFIG_LAMP_NONE && lamp != CONFIG_LAMP_OWN
+                                    : lamp == aspects[a].lamp)
             return true;
     }
     return false;
@@ -317,6 +366,13 @@ static void apply_config(void)
         }
         for (int a = 0; a < CONFIG_ASPECTS; a++)
             events[h][a].id = on && can_show(c, a) ? c->aspect_events[a] : no_event;
+        for (int i = 0; i < 3; i++) {
+            bool own = on && c->output_lamp[i] == CONFIG_LAMP_OWN;
+            if (!own)
+                lamp_on[h][i] = false;  // and dark when it next becomes one
+            lamp_events[h][i][0].id = own ? config.head_lamps[h].outputs[i].on_event : no_event;
+            lamp_events[h][i][1].id = own ? config.head_lamps[h].outputs[i].off_event : no_event;
+        }
     }
     test_events[0].id = config.test_start_event;
     test_events[1].id = config.test_stop_event;
@@ -327,7 +383,8 @@ static void apply_config(void)
 }
 
 // Default event IDs: the node ID followed by a 16-bit index, with room for
-// sixteen aspects per head, then the test's start and stop
+// sixteen aspects per head, then the test's start and stop, then eight own
+// events per head
 static uint64_t default_event(uint64_t node_id, int h, int a)
 {
     return node_id << 16 | (uint64_t)(0x100 + 16 * h + a);
@@ -336,6 +393,11 @@ static uint64_t default_event(uint64_t node_id, int h, int a)
 static uint64_t default_test_event(uint64_t node_id, bool start)
 {
     return node_id << 16 | (start ? 0x200 : 0x201);
+}
+
+static uint64_t default_lamp_event(uint64_t node_id, int h, int out, bool on)
+{
+    return node_id << 16 | (uint64_t)(0x300 + 8 * h + 2 * out + !on);
 }
 
 void signals_defaults(config_layout_t *cfg, uint64_t node_id)
@@ -348,10 +410,14 @@ void signals_defaults(config_layout_t *cfg, uint64_t node_id)
         for (int a = 0; a < CONFIG_ASPECTS; a++)
             lcc_put_be64(c->aspect_events[a], default_event(node_id, h, a));
         c->power_on_aspect = CONFIG_ASPECT_RED;
-        c->output_lamp[0] = CONFIG_LAMP_RED;  // SSSB: yellow takes the blue output
+        c->output_lamp[0] = CONFIG_LAMP_RED;  // SSSB wiring
         c->output_lamp[1] = CONFIG_LAMP_GREEN;
         c->output_lamp[2] = CONFIG_LAMP_YELLOW;
         memset(c->output_brightness, 128, sizeof(c->output_brightness));
+        for (int i = 0; i < 3; i++) {
+            lcc_put_be64(cfg->head_lamps[h].outputs[i].on_event, default_lamp_event(node_id, h, i, true));
+            lcc_put_be64(cfg->head_lamps[h].outputs[i].off_event, default_lamp_event(node_id, h, i, false));
+        }
     }
     lcc_put_be64(cfg->test_start_event, default_test_event(node_id, true));
     lcc_put_be64(cfg->test_stop_event, default_test_event(node_id, false));
@@ -369,6 +435,12 @@ void signals_migrate_events(config_layout_t *cfg, uint64_t old_id, uint64_t new_
         for (int a = 0; a < CONFIG_ASPECTS; a++)
             migrate_event(cfg->heads[h].aspect_events[a], default_event(old_id, h, a),
                           default_event(new_id, h, a));
+        for (int i = 0; i < 3; i++) {
+            migrate_event(cfg->head_lamps[h].outputs[i].on_event, default_lamp_event(old_id, h, i, true),
+                          default_lamp_event(new_id, h, i, true));
+            migrate_event(cfg->head_lamps[h].outputs[i].off_event, default_lamp_event(old_id, h, i, false),
+                          default_lamp_event(new_id, h, i, false));
+        }
     }
     migrate_event(cfg->test_start_event, default_test_event(old_id, true),
                   default_test_event(new_id, true));
@@ -383,7 +455,7 @@ void signals_config_written(void)
 
 void signals_init(void)
 {
-    flash_timer = xTimerCreate("flash", pdMS_TO_TICKS(FLASH_MS), pdTRUE, NULL, flash_timer_cb);
+    flash_timer = xTimerCreate("flash", pdMS_TO_TICKS(FLASH_TICK_MS), pdTRUE, NULL, flash_timer_cb);
     fade_timer = xTimerCreate("fade", pdMS_TO_TICKS(FADE_TICK_MS), pdTRUE, NULL, fade_timer_cb);
     test_timer = xTimerCreate("test", pdMS_TO_TICKS(TEST_STEP_MS), pdTRUE, NULL, test_timer_cb);
 
@@ -392,6 +464,14 @@ void signals_init(void)
             events[h][a] = (lcc_event_t){ .id = no_event, .on_event = on_aspect,
                                           .state = aspect_state, .arg = event_arg(h, a) };
             lcc_event_register(&events[h][a]);
+        }
+        for (int i = 0; i < 3; i++) {
+            for (int on = 1; on >= 0; on--) {
+                lcc_event_t *e = &lamp_events[h][i][!on];
+                *e = (lcc_event_t){ .id = no_event, .on_event = on_lamp, .state = lamp_state,
+                                    .arg = lamp_arg(h, i, on) };
+                lcc_event_register(e);
+            }
         }
     }
     for (int i = 0; i < 2; i++) {

@@ -44,6 +44,7 @@
 #define CONFIG_LAMP_S       5
 #define CONFIG_LAMP_D       6
 #define CONFIG_LAMP_NUMBER  7
+#define CONFIG_LAMP_OWN     8  // its own On and Off events, not the aspects
 
 typedef struct {
     uint8_t throw_event[8];
@@ -81,12 +82,22 @@ typedef struct {
     uint8_t aspect_events[CONFIG_ASPECTS][8];  // by CONFIG_ASPECT_*
     uint8_t enabled;
     uint8_t power_on_aspect;       // CONFIG_ASPECT_*
-    uint8_t output_lamp[3];        // CONFIG_LAMP_* on OUTR, OUTG and OUTB
+    uint8_t output_lamp[3];        // CONFIG_LAMP_* on outputs R, G and Y
     uint8_t output_brightness[3];
     uint8_t lamp_fade;             // CONFIG_FADE_*
     uint8_t chain_position;        // chip on the chain, 1-16; 0 = the head's own number
-    uint8_t reserved[6];
+    uint8_t flash_rate;            // CONFIG_FLASH_*
+    uint8_t output_phase[3];       // CONFIG_PHASE_* on outputs R, G and Y
+    uint8_t reserved[2];
 } config_head_t;
+
+// The events of a head's outputs set to CONFIG_LAMP_OWN
+typedef struct {
+    struct {
+        uint8_t on_event[8];
+        uint8_t off_event[8];
+    } outputs[3];  // R, G, Y
+} config_head_lamps_t;
 
 typedef struct {
     // Segment "Node Identity", origin 0
@@ -108,6 +119,7 @@ typedef struct {
     // Still "Signal Heads", after the heads
     uint8_t test_start_event[8];
     uint8_t test_stop_event[8];
+    config_head_lamps_t head_lamps[CONFIG_HEADS];
 } config_layout_t;
 
 #define CONFIG_DEFAULT_THROWN     0
@@ -127,6 +139,17 @@ typedef struct {
 #define CONFIG_FADE_NONE          0
 #define CONFIG_FADE_INCANDESCENT  1
 
+// How fast a head's flashing aspects flash, in flashes a minute. Zero is the
+// rate heads flashed at before there was a choice.
+#define CONFIG_FLASH_MEDIUM  0  // 60
+#define CONFIG_FLASH_SLOW    1  // 40
+#define CONFIG_FLASH_FAST    2  // 90
+
+// When a flashing lamp is lit: phase B lamps light while phase A lamps are
+// dark, for alternating flashers
+#define CONFIG_PHASE_A  0
+#define CONFIG_PHASE_B  1
+
 // Where the signal chain plugs in: the LED header, or on boards made before
 // it, a servo output (servo n is CONFIG_CONNECTOR_SERVO1 + n - 1)
 #define CONFIG_CONNECTOR_LED     0
@@ -140,6 +163,8 @@ _Static_assert(offsetof(config_layout_t, tracks) == 612, "RailCom Detectors segm
 _Static_assert(sizeof(config_head_t) == 136, "head group stride must match the CDI");
 _Static_assert(offsetof(config_layout_t, chain_speed) == 996, "Signal Heads segment origin");
 _Static_assert(offsetof(config_layout_t, test_start_event) == 3176, "Signal Test after the heads");
-_Static_assert(sizeof(config_layout_t) == 3192, "configuration space size");
+_Static_assert(sizeof(config_head_lamps_t) == 48, "own-event group stride must match the CDI");
+_Static_assert(offsetof(config_layout_t, head_lamps) == 3192, "Own Events after the Signal Test");
+_Static_assert(sizeof(config_layout_t) == 3960, "configuration space size");
 
 #endif // CONFIG_LAYOUT_H

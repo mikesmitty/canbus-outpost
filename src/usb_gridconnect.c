@@ -92,8 +92,8 @@ static void toggle_signal_test(uint32_t arg)
 }
 
 // Ends a signal test first, which would otherwise cover it a second later.
-// arg is the chip, then the OUTR, OUTG and OUTB bytes (red, green and yellow
-// on SSSB wiring).
+// arg is the chip, then the bytes for outputs R, G and Y (red, green and
+// yellow on SSSB wiring).
 static void set_chip(uint32_t arg)
 {
     signals_test(false);

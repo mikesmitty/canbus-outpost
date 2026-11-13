@@ -10,8 +10,9 @@
  * after initialization and calls consumers when their events arrive.
  */
 
+/* Each slot is a pointer, 4 bytes on the RP2350 */
 #ifndef LCC_MAX_EVENTS
-#define LCC_MAX_EVENTS  256
+#define LCC_MAX_EVENTS  512
 #endif
 
 /* Well-known event: another node is using this node's ID */

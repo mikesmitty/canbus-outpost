@@ -211,9 +211,10 @@ static lcc_event_state_t clear_state(uintptr_t t) { return occupancy_state(t, fa
 // ------------------------------------------------------------------
 
 // Default event IDs: the node ID followed by a 16-bit index; the switch
-// machines use 0x00-0x13, the signal heads 0x100-0x1FF and the signal test
-// 0x200-0x201. Default reporter IDs are the unique IDs after the node ID, so
-// node IDs should be at least five apart.
+// machines use 0x00-0x13, the signal heads 0x100-0x1FF, the signal test
+// 0x200-0x201 and the heads' own-event outputs 0x300-0x37F. Default reporter
+// IDs are the unique IDs after the node ID, so node IDs should be at least
+// five apart.
 static uint64_t default_occupied(uint64_t node_id, int t) { return node_id << 16 | (0x20 + 2 * t); }
 static uint64_t default_clear(uint64_t node_id, int t) { return node_id << 16 | (0x21 + 2 * t); }
 static uint64_t default_reporter(uint64_t node_id, int t)

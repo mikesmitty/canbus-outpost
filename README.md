@@ -25,8 +25,9 @@ Heads start disabled, since the board can't tell which are fitted. Under **Signa
 
 1. Set **Chain Speed** to match the chips' SET pin: 800 kHz when open, 400 kHz when tied to power. RR-CirKits' heads leave it open, so they run at the default of 800 kHz.
 2. Set the head's **Enabled**.
-3. Set the lamp on each output. The defaults are red, green and yellow on OUTR, OUTG and OUTB, which is the SSSB wiring. Each output also has its own brightness.
+3. Set the lamp on each output: **R Lamp**, **Y Lamp** and **G Lamp**, named as on an SSSB head's RGY header. The defaults are red on R, yellow on Y and green on G, which is the SSSB wiring, but any lamp can go on any output. Each output also has its own brightness.
 4. Optionally, set **Lamp Fade** to Incandescent. The lamps then warm up over 150 ms and cool down over 300 ms, like ballasted bulbs, instead of switching at once. Flashing aspects fade too.
+5. Optionally, set the **Flash Rate** for its flashing aspects: slow (40 a minute), medium (60, the default) or fast (90). Each output also has a **Phase**: phase B lamps light while phase A lamps are dark, so two red lamps can alternate like a crossing flasher, on one head or on two at the same rate.
 
 To add a chip partway along the chain, set the **Chain Position** of each head after it to one more than its number, instead of setting those heads up again on their new numbers. 0, the default, means the head's own number. Two heads on one chip both show on it.
 
@@ -36,11 +37,15 @@ Each aspect has its own event, and only the aspects a head has lamps for are on 
 | --- | --- |
 | Dark | nothing |
 | Red, Yellow, Green | that lamp |
-| Flashing Red, Yellow, Green | that lamp, at 60 flashes a minute, with all flashing heads in step |
+| Flashing Red, Yellow, Green | that lamp, at the head's Flash Rate and in each output's Phase, with heads at one rate in step |
 | Lunar | a lunar lamp |
 | S, D, Number | the lit letters and speed number of NYC subway time signals |
 
 A head lights one kind of lamp at a time, so a light that shows alongside another, like lunar under a red, takes a chip of its own: for example head 1 as red/yellow/green and head 2 as lunar/S/D.
+
+### Lamps of their own
+
+An output set to **Own Events** isn't part of the aspects. It has an On and an Off event of its own, under **Own Events** at the end of **Signal Heads**, and lights at its brightness, fading if the head fades. Use it for panel lights, building lights, or lamps that must light together on one chip. Its events are on the bus while its head is enabled, and it starts out dark. A head whose outputs are all Own Events or None has no aspects on the bus, not even Dark.
 
 ### Boards without an LED header
 
@@ -64,7 +69,7 @@ Never fit U1 and R1 together: U1's 5 V output would drive back into the pin feed
 
 ### Checking the chain
 
-**Signal Test**, at the end of **Signal Heads**, has a Start and a Stop event. From Start until Stop, every chip on the chain, set up or not, lights red, yellow and green in turn and then none, a second each (OUTR, OUTB and OUTG, as SSSB heads are wired). The heads still follow their events meanwhile, and go back to their aspects at Stop. Each node has its own pair by default; give every node the same pair to test all the chains on the layout at once.
+**Signal Test**, at the end of **Signal Heads**, has a Start and a Stop event. From Start until Stop, every chip on the chain, set up or not, lights red, yellow and green in turn and then none, a second each (outputs R, Y and G, as SSSB heads are wired). The heads still follow their events meanwhile, and go back to their aspects at Stop. Each node has its own pair by default; give every node the same pair to test all the chains on the layout at once.
 
 On the USB console, `lights test` does the same until `lights test` again, and `lights <chip> <r> <y> <g>` sets one chip's red, yellow and green directly until the application next updates that chip, ending any test. Chips count from 0 here.
 

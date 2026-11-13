@@ -83,6 +83,13 @@ static void rx(uint16_t mti, uint64_t id)
 
 static uint64_t event(int h, int aspect) { return lcc_get_be64(config.heads[h].aspect_events[aspect]); }
 static void show(int h, int aspect) { rx(LCC_MTI_EVENT_REPORT, event(h, aspect)); }
+static uint64_t lamp_event(int h, int out, bool on)
+{
+    return lcc_get_be64(on ? config.head_lamps[h].outputs[out].on_event
+                           : config.head_lamps[h].outputs[out].off_event);
+}
+static void lamp(int h, int out, bool on) { rx(LCC_MTI_EVENT_REPORT, lamp_event(h, out, on)); }
+
 static uint64_t test_event(bool start)
 {
     return lcc_get_be64(start ? config.test_start_event : config.test_stop_event);
@@ -101,7 +108,10 @@ static void identify_all(void)
 
 static void fire(const char *name) { TimerHandle_t t = mock_timer(name); t->cb(t); }
 static bool running(const char *name) { return mock_timer(name)->active; }
-static void flash(void) { fire("flash"); }
+static void fade_ticks(int n);
+// Flash ticks are a twelfth of a second
+static void flash_ticks(int n) { while (n-- > 0) fire("flash"); }
+static void flash(void) { flash_ticks(6); }  // half a cycle at 60 a minute
 
 static bool chip_is(int c, uint8_t r, uint8_t g, uint8_t b)
 {
@@ -145,6 +155,11 @@ static void test_defaults(void)
           "default events %016llx", (unsigned long long)event(15, CONFIG_ASPECT_FLASHING_GREEN));
     CHECK(test_event(true) == (NODE_ID << 16 | 0x200) && test_event(false) == (NODE_ID << 16 | 0x201),
           "default test events");
+    CHECK(lamp_event(0, 0, true) == (NODE_ID << 16 | 0x300) && lamp_event(0, 0, false) == (NODE_ID << 16 | 0x301) &&
+          lamp_event(0, 2, false) == (NODE_ID << 16 | 0x305) && lamp_event(15, 2, false) == (NODE_ID << 16 | 0x37D),
+          "default own events %016llx", (unsigned long long)lamp_event(15, 2, false));
+    CHECK(config.heads[0].flash_rate == CONFIG_FLASH_MEDIUM && config.heads[0].output_phase[1] == CONFIG_PHASE_A,
+          "default flashing");
     CHECK(bit_hz == WS2811_800KHZ, "bit rate %u", (unsigned)bit_hz);
     for (int c = 0; c < WS2811_CHIPS; c++)
         CHECK(chip_is(c, 0, 0, 0), "chip %d lit with no heads enabled", c);
@@ -179,7 +194,7 @@ static void test_aspects(void)
     setup(2);
     CHECK(chip_is(0, 128, 0, 0) && chip_is(1, 128, 0, 0), "not red at power-on");
 
-    // Default wiring is R, G, Y on OUTR, OUTG, OUTB
+    // Default lamps: red, green and yellow on outputs R, G and Y
     show(0, CONFIG_ASPECT_GREEN);
     CHECK(chip_is(0, 0, 128, 0) && chip_is(1, 128, 0, 0), "green on head 1 only");
     CHECK(shows == 1, "%d frames for one aspect", shows);
@@ -216,11 +231,11 @@ static void test_lamps_on_outputs(void)
     // Any lamp can be on any output, at that output's brightness
     set_lamps(0, CONFIG_LAMP_GREEN, CONFIG_LAMP_YELLOW, CONFIG_LAMP_RED);
     show(0, CONFIG_ASPECT_GREEN);
-    CHECK(chip_is(0, 10, 0, 0), "green on OUTR");
+    CHECK(chip_is(0, 10, 0, 0), "green on R");
     show(0, CONFIG_ASPECT_YELLOW);
-    CHECK(chip_is(0, 0, 20, 0), "yellow on OUTG");
+    CHECK(chip_is(0, 0, 20, 0), "yellow on G");
     show(0, CONFIG_ASPECT_RED);
-    CHECK(chip_is(0, 0, 0, 30), "red on OUTB");
+    CHECK(chip_is(0, 0, 0, 30), "red on Y");
 
     // A lamp on several outputs lights them all: the yard aspect's three yellows
     set_lamps(0, CONFIG_LAMP_YELLOW, CONFIG_LAMP_YELLOW, CONFIG_LAMP_YELLOW);
@@ -342,6 +357,155 @@ static void test_flashing(void)
     // The next flash starts lit even though the last ended dark
     show(0, CONFIG_ASPECT_FLASHING_GREEN);
     CHECK(chip_is(0, 0, 128, 0), "restarted dark");
+}
+
+// Each head flashes at its own rate; heads at one rate stay together
+static void test_flash_rates(void)
+{
+    setup(3);
+    config.heads[0].flash_rate = CONFIG_FLASH_SLOW;
+    config.heads[2].flash_rate = CONFIG_FLASH_FAST;
+    signals_config_written();
+    show(0, CONFIG_ASPECT_FLASHING_RED);
+    show(1, CONFIG_ASPECT_FLASHING_RED);
+    show(2, CONFIG_ASPECT_FLASHING_RED);
+
+    // Lit for 9, 6 and 4 ticks, then dark as long
+    bool ok = true;
+    for (int t = 0; t < 72 && ok; t++) {
+        ok = chip[0][0] == ((t / 9) % 2 ? 0 : 128) && chip[1][0] == ((t / 6) % 2 ? 0 : 128) &&
+             chip[2][0] == ((t / 4) % 2 ? 0 : 128);
+        CHECK(ok, "tick %d: slow %u, medium %u, fast %u", t, chip[0][0], chip[1][0], chip[2][0]);
+        flash_ticks(1);
+    }
+    CHECK(chip_is(0, 128, 0, 0) && chip_is(1, 128, 0, 0) && chip_is(2, 128, 0, 0),
+          "the rates don't line up after a whole cycle");
+
+    // An unknown rate flashes at the medium one
+    config.heads[0].flash_rate = 7;
+    signals_config_written();
+    for (int t = 0; t < 12; t++) {
+        CHECK(chip[0][0] == chip[1][0], "tick %d: unknown rate %u, medium %u", t, chip[0][0], chip[1][0]);
+        flash_ticks(1);
+    }
+}
+
+// Phase B lamps are lit while phase A lamps are dark: a crossing flasher on
+// one head, or on two
+static void test_flash_phases(void)
+{
+    setup(3);
+    set_lamps(0, CONFIG_LAMP_RED, CONFIG_LAMP_RED, CONFIG_LAMP_NONE);
+    config.heads[0].output_phase[1] = CONFIG_PHASE_B;
+    config.heads[2].output_phase[0] = CONFIG_PHASE_B;
+    signals_config_written();
+
+    show(0, CONFIG_ASPECT_FLASHING_RED);
+    show(1, CONFIG_ASPECT_FLASHING_RED);
+    show(2, CONFIG_ASPECT_FLASHING_RED);
+    CHECK(chip_is(0, 128, 0, 0) && chip_is(1, 128, 0, 0) && chip_is(2, 0, 0, 0), "first half");
+    flash();
+    CHECK(chip_is(0, 0, 128, 0) && chip_is(1, 0, 0, 0) && chip_is(2, 128, 0, 0), "second half");
+    flash();
+    CHECK(chip_is(0, 128, 0, 0) && chip_is(1, 128, 0, 0) && chip_is(2, 0, 0, 0), "third half");
+
+    // A steady aspect ignores the phase
+    show(2, CONFIG_ASPECT_RED);
+    flash();
+    CHECK(chip_is(2, 128, 0, 0), "steady red flashed");
+    flash();
+    CHECK(chip_is(2, 128, 0, 0), "steady red went dark");
+}
+
+// An output set to Own Events follows its On and Off events, beside the
+// aspects on the head's other outputs
+static void test_own_events(void)
+{
+    setup(2);
+    config.heads[0].output_brightness[2] = 40;
+    set_lamps(0, CONFIG_LAMP_RED, CONFIG_LAMP_GREEN, CONFIG_LAMP_OWN);
+    CHECK(chip_is(0, 128, 0, 0), "not red");
+
+    // On the bus only for the own output of the enabled head; it starts dark
+    identify_all();
+    CHECK(has(LCC_MTI_CONSUMER_IDENTIFIED_INVALID, lamp_event(0, 2, true)) &&
+          has(LCC_MTI_CONSUMER_IDENTIFIED_VALID, lamp_event(0, 2, false)), "own events not identified");
+    CHECK(!has(LCC_MTI_CONSUMER_IDENTIFIED_INVALID, lamp_event(0, 0, true)) &&
+          !has(LCC_MTI_CONSUMER_IDENTIFIED_VALID, lamp_event(0, 0, false)) &&
+          !has(LCC_MTI_CONSUMER_IDENTIFIED_VALID, lamp_event(1, 2, false)), "other outputs' own events on the bus");
+    // Head 1 lost yellow (5 aspects), head 2 has its 7, and the test's 2
+    CHECK(consumers_announced() == 5 + 2 + 7 + 2, "identified %d events", consumers_announced());
+
+    // Lit at its brightness, beside the aspect, and through aspect changes
+    lamp(0, 2, true);
+    CHECK(chip_is(0, 128, 0, 40), "own output not lit");
+    show(0, CONFIG_ASPECT_GREEN);
+    CHECK(chip_is(0, 0, 128, 40), "own output followed the aspect");
+    show(0, CONFIG_ASPECT_DARK);
+    CHECK(chip_is(0, 0, 0, 40), "dark aspect put out the own output");
+    rx(LCC_MTI_CONSUMER_IDENTIFY, lamp_event(0, 2, true));
+    CHECK(has(LCC_MTI_CONSUMER_IDENTIFIED_VALID, lamp_event(0, 2, true)), "on not valid");
+    rx(LCC_MTI_CONSUMER_IDENTIFY, lamp_event(0, 2, false));
+    CHECK(has(LCC_MTI_CONSUMER_IDENTIFIED_INVALID, lamp_event(0, 2, false)), "off not invalid");
+    lamp(0, 2, false);
+    CHECK(chip_is(0, 0, 0, 0), "own output not out");
+
+    // Aspects never light it
+    set_lamps(0, CONFIG_LAMP_RED, CONFIG_LAMP_OWN, CONFIG_LAMP_OWN);
+    show(0, CONFIG_ASPECT_RED);
+    show(0, CONFIG_ASPECT_GREEN);
+    CHECK(chip_is(0, 128, 0, 0), "green event lit an own output");
+
+    // Two lamps lit together on one chip, each at its brightness
+    lamp(0, 1, true);
+    lamp(0, 2, true);
+    CHECK(chip_is(0, 128, 128, 40), "two own outputs");
+
+    // Set to another lamp, it stops following its events and starts dark
+    // when it's set back
+    set_lamps(0, CONFIG_LAMP_RED, CONFIG_LAMP_GREEN, CONFIG_LAMP_OWN);
+    CHECK(chip_is(0, 128, 0, 40), "G still lit as an own output");
+    lamp(0, 1, true);
+    CHECK(chip_is(0, 128, 0, 40), "G followed its own event as a green lamp");
+    set_lamps(0, CONFIG_LAMP_RED, CONFIG_LAMP_OWN, CONFIG_LAMP_OWN);
+    CHECK(chip_is(0, 128, 0, 40), "G came back lit");
+
+    // Disabled: dark and off the bus; enabled again, dark
+    config.heads[0].enabled = 0;
+    signals_config_written();
+    CHECK(chip_is(0, 0, 0, 0), "disabled head's own output lit");
+    int writes = chip_writes;
+    lamp(0, 2, true);
+    CHECK(chip_writes == writes, "disabled head followed an own event");
+    config.heads[0].enabled = 1;
+    signals_config_written();
+    CHECK(chip_is(0, 128, 0, 0), "enabled again: not just red");
+}
+
+// A head with only own outputs is no signal: none of its aspects are on the
+// bus, Dark included
+static void test_own_events_only(void)
+{
+    setup(1);
+    set_lamps(0, CONFIG_LAMP_OWN, CONFIG_LAMP_OWN, CONFIG_LAMP_NONE);
+    identify_all();
+    CHECK(consumers_announced() == 2 * 2 + 2, "identified %d events", consumers_announced());
+    CHECK(!has(LCC_MTI_CONSUMER_IDENTIFIED_VALID, event(0, CONFIG_ASPECT_DARK)) &&
+          !has(LCC_MTI_CONSUMER_IDENTIFIED_INVALID, event(0, CONFIG_ASPECT_DARK)), "dark on the bus");
+    CHECK(chip_is(0, 0, 0, 0), "lit at power-on");
+
+    // Fading like the head's lamps
+    config.heads[0].lamp_fade = CONFIG_FADE_INCANDESCENT;
+    signals_config_written();
+    lamp(0, 0, true);
+    CHECK(chip[0][0] < 128 && running("fade"), "didn't fade up: %u", chip[0][0]);
+    fade_ticks(100);
+    CHECK(chip_is(0, 128, 0, 0), "didn't reach full");
+
+    // Lamps not on a head's own outputs still go through its events
+    set_lamps(0, CONFIG_LAMP_OWN, CONFIG_LAMP_OWN, CONFIG_LAMP_YELLOW);
+    identify_all();
+    CHECK(has(LCC_MTI_CONSUMER_IDENTIFIED_INVALID, event(0, CONFIG_ASPECT_DARK)), "dark not back");
 }
 
 static void test_enable_and_disable(void)
@@ -515,8 +679,8 @@ static void test_signal_test(void)
     config.heads[1].lamp_fade = CONFIG_FADE_INCANDESCENT;
     signals_config_written();
 
-    // Every chip, enabled or not, steps through red, yellow, green (OUTR,
-    // OUTB, OUTG) and none
+    // Every chip, enabled or not, steps through red, yellow, green (outputs
+    // R, Y, G) and none
     signals_test(true);
     CHECK(signals_testing() && running("test"), "test not running");
     static const uint8_t want[5][3] = { {128, 0, 0}, {0, 0, 128}, {0, 128, 0}, {0, 0, 0}, {128, 0, 0} };
@@ -576,12 +740,16 @@ static void test_migrate_events(void)
 {
     setup(0);
     lcc_put_be64(config.heads[3].aspect_events[2], 0x0102030405060708ULL);  // user's own
+    lcc_put_be64(config.head_lamps[3].outputs[1].off_event, 0x0102030405060709ULL);
     signals_migrate_events(&config, NODE_ID, NEW_ID);
     CHECK(event(0, CONFIG_ASPECT_DARK) == (NEW_ID << 16 | 0x100), "default event not moved");
     CHECK(event(15, 10) == (NEW_ID << 16 | 0x1FA), "last default event not moved");
     CHECK(event(3, 2) == 0x0102030405060708ULL, "user's event moved");
+    CHECK(lamp_event(3, 1, false) == 0x0102030405060709ULL, "user's own event moved");
     CHECK(test_event(true) == (NEW_ID << 16 | 0x200) && test_event(false) == (NEW_ID << 16 | 0x201),
           "test events not moved");
+    CHECK(lamp_event(0, 0, true) == (NEW_ID << 16 | 0x300) && lamp_event(15, 2, false) == (NEW_ID << 16 | 0x37D),
+          "own events not moved");
 }
 
 int main(int argc, char **argv)
@@ -595,6 +763,10 @@ int main(int argc, char **argv)
     test_events_from_this_node();
     test_events_follow_the_lamps();
     test_flashing();
+    test_flash_rates();
+    test_flash_phases();
+    test_own_events();
+    test_own_events_only();
     test_enable_and_disable();
     test_chain_speed();
     test_connector();

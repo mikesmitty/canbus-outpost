@@ -22,9 +22,10 @@ void ws2811_set_bit_rate(uint32_t bit_hz);
 // the pin it leaves rests low until something else takes it.
 void ws2811_set_connector(int connector);
 
-// chip counts out from the board. r, g and y are the chip's OUTR, OUTG and
-// OUTB duty, 0 (off) to 255 (full): red, green and yellow as SSSB heads are
-// wired, though any lamp can be on any output. Values go out on the next
+// chip counts out from the board. r, g and y are the duty of the chip's
+// outputs R, G and Y (its pins 1, 2 and 3), 0 (off) to 255 (full): red,
+// green and yellow as SSSB heads are wired, though any lamp can be on any
+// output. Values go out on the next
 // frame; ws2811_show() asks for one now.
 void ws2811_set(int chip, uint8_t r, uint8_t g, uint8_t y);
 void ws2811_show(void);

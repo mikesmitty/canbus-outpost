@@ -1,6 +1,15 @@
 #include "cdi_data.h"
 
 #define HEAD(n) "<repname>Head " #n "</repname>"
+/* Not just "Head n": tools that name a replica by its repname alone would
+ * mix these up with the heads */
+#define OUTPUTS(n) "<repname>Head " #n " Outputs</repname>"
+
+#define PHASE_MAP \
+    "<map>" \
+    "<relation><property>0</property><value>A</value></relation>" \
+    "<relation><property>1</property><value>B</value></relation>" \
+    "</map>"
 
 #define LAMP_MAP \
     "<map>" \
@@ -12,6 +21,7 @@
     "<relation><property>5</property><value>S</value></relation>" \
     "<relation><property>6</property><value>D</value></relation>" \
     "<relation><property>7</property><value>Number</value></relation>" \
+    "<relation><property>8</property><value>Own Events</value></relation>" \
     "</map>"
 
 const char cdi_xml[] =
@@ -227,10 +237,13 @@ const char cdi_xml[] =
 
     "<group replication='16'>"
     "<name>Head</name>"
-    "<description>A head is one chip with a lamp on each of its three outputs, and it lights "
+    "<description>A head is one chip with a lamp on each of its three outputs, R, G and Y, "
+    "named as on an SSSB head's RGY header. Any lamp can go on any output. A head lights "
     "one kind of lamp at a time. A light that shows alongside another, like lunar under a red, "
     "needs a chip of its own: use the next head for it. Only the events for lamps this head "
-    "has are on the bus.</description>"
+    "has are on the bus. An output set to Own Events isn't part of the aspects: it has its own "
+    "On and Off events, under Own Events below, for panel or building lights or lamps that "
+    "light together.</description>"
     HEAD(1) HEAD(2) HEAD(3) HEAD(4) HEAD(5) HEAD(6) HEAD(7) HEAD(8)
     HEAD(9) HEAD(10) HEAD(11) HEAD(12) HEAD(13) HEAD(14) HEAD(15) HEAD(16)
 
@@ -274,30 +287,30 @@ const char cdi_xml[] =
     "</map>"
     "</int>"
     "<int size='1'>"
-    "<name>OUTR Lamp</name>"
+    "<name>R Lamp</name>"
     "<default>1</default>"
     LAMP_MAP
     "</int>"
     "<int size='1'>"
-    "<name>OUTG Lamp</name>"
+    "<name>G Lamp</name>"
     "<default>3</default>"
     LAMP_MAP
     "</int>"
     "<int size='1'>"
-    "<name>OUTB Lamp</name>"
+    "<name>Y Lamp</name>"
     "<default>2</default>"
     LAMP_MAP
     "</int>"
     "<int size='1'>"
-    "<name>OUTR Brightness</name>"
+    "<name>R Brightness</name>"
     "<min>0</min><max>255</max><default>128</default>"
     "</int>"
     "<int size='1'>"
-    "<name>OUTG Brightness</name>"
+    "<name>G Brightness</name>"
     "<min>0</min><max>255</max><default>128</default>"
     "</int>"
     "<int size='1'>"
-    "<name>OUTB Brightness</name>"
+    "<name>Y Brightness</name>"
     "<min>0</min><max>255</max><default>128</default>"
     "</int>"
     "<int size='1'>"
@@ -318,17 +331,60 @@ const char cdi_xml[] =
     "one chip both show on it.</description>"
     "<min>0</min><max>16</max><default>0</default>"
     "</int>"
-    "<string size='6'/>" /* room for more settings */
+    "<int size='1'>"
+    "<name>Flash Rate</name>"
+    "<description>How fast the flashing aspects flash</description>"
+    "<default>0</default>"
+    "<map>"
+    "<relation><property>1</property><value>Slow, 40 a minute</value></relation>"
+    "<relation><property>0</property><value>Medium, 60 a minute</value></relation>"
+    "<relation><property>2</property><value>Fast, 90 a minute</value></relation>"
+    "</map>"
+    "</int>"
+    "<int size='1'>"
+    "<name>R Phase</name>"
+    "<description>When a flashing lamp on this output is lit. Phase B lamps light while "
+    "phase A lamps are dark, so two lamps can alternate like a crossing flasher, on one "
+    "head or two at the same rate.</description>"
+    "<default>0</default>"
+    PHASE_MAP
+    "</int>"
+    "<int size='1'>"
+    "<name>G Phase</name>"
+    "<default>0</default>"
+    PHASE_MAP
+    "</int>"
+    "<int size='1'>"
+    "<name>Y Phase</name>"
+    "<default>0</default>"
+    PHASE_MAP
+    "</int>"
+    "<string size='2'/>" /* room for more settings */
     "</group>"
 
     "<group>"
     "<name>Signal Test</name>"
     "<description>From Start until Stop, every chip on the chain, set up or not, lights red, "
-    "yellow and green in turn and then none, a second each (OUTR, OUTB and OUTG, as SSSB heads "
+    "yellow and green in turn and then none, a second each (outputs R, Y and G, as SSSB heads "
     "are wired). The heads still follow their events, and go back to their aspects at Stop. "
     "Give every node the same pair to test all the chains on the layout at once.</description>"
     "<eventid><name>Start Event</name></eventid>"
     "<eventid><name>Stop Event</name></eventid>"
+    "</group>"
+
+    "<group replication='16'>"
+    "<name>Own Events</name>"
+    "<description>For each output of the head set to Own Events: it lights at its brightness "
+    "on its On event and goes out on its Off event, fading if the head fades. Its events are "
+    "on the bus while the head is enabled. It starts out dark.</description>"
+    OUTPUTS(1) OUTPUTS(2) OUTPUTS(3) OUTPUTS(4) OUTPUTS(5) OUTPUTS(6) OUTPUTS(7) OUTPUTS(8)
+    OUTPUTS(9) OUTPUTS(10) OUTPUTS(11) OUTPUTS(12) OUTPUTS(13) OUTPUTS(14) OUTPUTS(15) OUTPUTS(16)
+    "<eventid><name>R On</name></eventid>"
+    "<eventid><name>R Off</name></eventid>"
+    "<eventid><name>G On</name></eventid>"
+    "<eventid><name>G Off</name></eventid>"
+    "<eventid><name>Y On</name></eventid>"
+    "<eventid><name>Y Off</name></eventid>"
     "</group>"
     "</segment>"
 

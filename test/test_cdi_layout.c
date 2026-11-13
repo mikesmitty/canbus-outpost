@@ -79,6 +79,8 @@ static void walk(void)
                           sizeof(((config_track_t *)0)->member), kind }
 #define H(member, kind) { offsetof(config_head_t, member), \
                           sizeof(((config_head_t *)0)->member), kind }
+#define L(member, kind) { offsetof(config_head_lamps_t, member), \
+                          sizeof(((config_head_lamps_t *)0)->member), kind }
 
 int main(void)
 {
@@ -143,11 +145,23 @@ int main(void)
         H(output_brightness[2], KIND_INT),
         H(lamp_fade, KIND_INT),
         H(chain_position, KIND_INT),
+        H(flash_rate, KIND_INT),
+        H(output_phase[0], KIND_INT),
+        H(output_phase[1], KIND_INT),
+        H(output_phase[2], KIND_INT),
         H(reserved, KIND_STRING),
     };
     static const field_t test_fields[] = {
         F(test_start_event, KIND_EVENTID),
         F(test_stop_event, KIND_EVENTID),
+    };
+    static const field_t lamp_fields[] = {
+        L(outputs[0].on_event, KIND_EVENTID),
+        L(outputs[0].off_event, KIND_EVENTID),
+        L(outputs[1].on_event, KIND_EVENTID),
+        L(outputs[1].off_event, KIND_EVENTID),
+        L(outputs[2].on_event, KIND_EVENTID),
+        L(outputs[2].off_event, KIND_EVENTID),
     };
 
     field_t want[1024];
@@ -173,6 +187,11 @@ int main(void)
         }
     for (size_t i = 0; i < sizeof(test_fields) / sizeof(test_fields[0]); i++)
         want[nwant++] = test_fields[i];
+    for (int h = 0; h < CONFIG_HEADS; h++)
+        for (size_t i = 0; i < sizeof(lamp_fields) / sizeof(lamp_fields[0]); i++) {
+            want[nwant] = lamp_fields[i];
+            want[nwant++].offset += offsetof(config_layout_t, head_lamps) + h * sizeof(config_head_lamps_t);
+        }
 
     walk();
 
