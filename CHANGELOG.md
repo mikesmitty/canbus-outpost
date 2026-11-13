@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.6.0...v0.7.0) (2026-11-13)
+
+
+### Features
+
+* **signals:** add lamp fade, chain positions and a signal test ([f5e8a4e](https://github.com/mikesmitty/canbus-outpost/commit/f5e8a4e28dc066f7e2511b40ef13af6840b47dde))
+
+
+### Miscellaneous
+
+* **main:** release sssb-single 0.1.0 ([#15](https://github.com/mikesmitty/canbus-outpost/issues/15)) ([217954b](https://github.com/mikesmitty/canbus-outpost/commit/217954b76cf2d4b596e89bf3dad531a9492f835c))
+
 ## [0.6.0](https://github.com/mikesmitty/canbus-outpost/compare/v0.5.0...v0.6.0) (2026-11-07)
 
 
