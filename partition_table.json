@@ -1,5 +1,5 @@
 {
-  "version": [1, 0],
+  "version": [1, 1],
   "unpartitioned": {
     "families": ["absolute"],
     "permissions": { "secure": "rw", "nonsecure": "rw", "bootloader": "rw" }
@@ -16,7 +16,7 @@
     {
       "name": "B",
       "id": 1,
-      "size": "2036K",
+      "size": "1988K",
       "families": ["rp2350-arm-s"],
       "permissions": { "secure": "rw", "nonsecure": "rw", "bootloader": "rw" },
       "link": ["a", 0]

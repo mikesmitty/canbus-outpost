@@ -88,13 +88,17 @@ make flash            # build and load it with picotool
 make test             # run the host tests; no hardware needed
 ```
 
-Once per board, in BOOTSEL mode, install the A/B partition table that LCC firmware upgrades need. It keeps the saved configuration and node ID:
+Once per board, in BOOTSEL mode, install the A/B partition table that LCC firmware upgrades need. It keeps the saved configuration and node ID in the top 64 KB of flash:
 
 ```bash
 make partition-table
 ```
 
+A running board goes into BOOTSEL mode without its button through `picotool reboot -f -u` over USB.
+
 Flash with picotool rather than SWD, since loading over SWD replaces the partition table.
+
+Boards set up before the top 64 KB was kept clear have partition B running up to the last 16 KB. They keep working and keep their configuration, but can save only 4 KB of it until they get the new table, which the firmware reports on the debug log at startup. Installing it moves the configuration across on its next save.
 
 ## Node ID
 

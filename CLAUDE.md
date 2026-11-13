@@ -23,7 +23,7 @@ make flash
 make partition-table
 
 # Host-side tests: LCC library, CDI/config layout, RailCom decoder and
-# events, signal heads, turnouts, firmware image checks
+# events, signal heads, turnouts, flash storage, firmware image checks
 make test
 ```
 
@@ -64,7 +64,7 @@ Work is event-driven (queues, task notifications, FreeRTOS timers, GPIO interrup
 - **can2040** (`src/can2040.c/h`): PIO-based software CAN controller (third party).
 - **servo** (`src/servo.c/h`): 4-channel PWM servo output at 50 Hz with timed motion.
 - **ws2811** (`src/ws2811.c/h`): the SSSB signal light chain on the LED header (J15 in the schematic) or a servo output, PIO2 with DMA; it moves between pins only between frames. It sets each chip's three outputs; which lamp is on which output and what the aspects mean belongs to `src/app/signals.c`. The USB `lights <chip> <r> <y> <g>` command sets a chip's red, yellow and green directly for bench testing, until the application next updates that chip.
-- **nv_storage** (`src/nv_storage.c/h`): power-safe records (two sectors each, CRC) in the top 16 KB of flash, outside the partitions, for the configuration and the node ID. Read through the untranslated XIP window, since a partition boot maps only that partition.
+- **nv_storage** (`src/nv_storage.c/h`): power-safe records (two slots each, CRC; a slot is one or more sectors) in the top 64 KB of flash, after partition B, for the configuration (16 KB slots) and the node ID. Read through the untranslated XIP window, since a partition boot maps only that partition. Boards whose partition table predates the 64 KB keep the configuration in its old 4 KB slots at the very top; with the new table it moves across on the next save. `config.c` picks the region at load by checking the partition table.
 - **firmware_update** (`src/firmware_update.c/h`, `src/fw_image.c/h`): LCC firmware upgrades into the A/B partitions of `partition_table.json`. Images are built try-before-you-buy with a SHA-256 hash: a new image runs on trial and confirms itself 5 s after the node comes up; if it resets before then, or hasn't confirmed within 60 s, the next boot returns to the previous one. Without a partition table the node doesn't offer upgrades. Loading firmware over SWD writes at the start of flash and replaces the partition table, so flash with picotool.
 - **node_id** (`src/node_id.c/h`): the LCC node ID, set per board with the `nodeid` USB command from an OpenLCB-assigned range. Until then a locally-allocated stand-in (`0A` prefix, from the chip's device ID) is used, which can't clash with other vendors' IDs. The LCC library checks for another node with the same ID after joining the bus and reports one (well-known event, USB console, fast-blinking identify LED).
 
