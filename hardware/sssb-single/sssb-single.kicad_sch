@@ -7,7 +7,7 @@
 	(title_block
 		(title "SSSB Single")
 		(date "2026-11-07")
-		(rev "v0.0.0")
+		(rev "v0.1.0")
 		(company "Michael Smith")
 	)
 	(lib_symbols
