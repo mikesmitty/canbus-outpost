@@ -84,6 +84,8 @@ KiCad projects, one directory each:
 
 Each project's `production/` (gerbers, BOM, pick-and-place for JLCPCB) holds what was last ordered, made with `hardware/export.sh <project>` (kikit; JLCPCB_CORRECTION fields fix part rotations). `production/` is gitignored, so add it with `git add -f`.
 
+Each board is its own release-please package (tags `outpost-board-v…` and `sssb-single-v…`); the firmware package at the top level leaves `hardware/` out. A board's release pull request writes its version into the title block revision of its schematic and PCB (`.github/workflows/kicad-revs.yml`); the outpost board prints it on the silkscreen. A push to main that changes a schematic or PCB gets a follow-up commit writing its title block date, the day of its last commit that changed more than the title block (`hardware/kicad-dates.sh`, run by `kicad-dates.yml`), so pull after pushing KiCad changes.
+
 ### Planning Docs (`conductor/`)
 
 Phase documents tracking project evolution. `phase-1.md` has the most current MVP firmware spec.

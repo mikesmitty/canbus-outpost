@@ -1,0 +1,37 @@
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.kicad_sch'
+      - '**.kicad_pcb'
+
+name: KiCad Dates
+
+# Writes each schematic and PCB's title block date: the day of its last
+# commit that changed more than the title block (hardware/kicad-dates.sh)
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0  # the dates come from the history
+
+      - name: Update KiCad dates
+        run: hardware/kicad-dates.sh
+
+      - name: Commit
+        run: |
+          git diff --quiet && exit 0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -am 'chore(hardware): update KiCad dates'
+          git pull --rebase
+          git push

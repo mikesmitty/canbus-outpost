@@ -4,6 +4,12 @@
 	(generator_version "10.0")
 	(uuid "3db5fde7-e5bd-4f95-917b-a2300399103a")
 	(paper "A4")
+	(title_block
+		(title "SSSB Single")
+		(date "2026-11-07")
+		(rev "v0.0.0")
+		(company "Michael Smith")
+	)
 	(lib_symbols
 		(symbol "74xGxx:74AHCT1G125"
 			(exclude_from_sim no)

@@ -7,6 +7,12 @@
 		(legacy_teardrops no)
 	)
 	(paper "A4")
+	(title_block
+		(title "SSSB Single")
+		(date "2026-11-07")
+		(rev "v0.0.0")
+		(company "Michael Smith")
+	)
 	(layers
 		(0 "F.Cu" signal)
 		(2 "B.Cu" signal)

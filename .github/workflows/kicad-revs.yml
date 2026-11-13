@@ -1,0 +1,60 @@
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+
+name: KiCad Revisions
+
+# On a board's release pull request, writes the new version into the title
+# block revision of that board's schematic and PCB (the outpost board prints
+# it on its silkscreen). Release-please rewrites its branch on each update,
+# and this runs again on it.
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    if: >-
+      startsWith(github.head_ref, 'release-please--') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Update KiCad revisions
+        id: update
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # The board whose changelog this release changes; the firmware's
+          # changelog at the top level isn't one
+          changelog="$(git diff --name-only "$BASE...HEAD" -- 'hardware/*/CHANGELOG.md' | head -n1)"
+          board="${changelog%/CHANGELOG.md}"
+          version="${TITLE##* }"
+          if [ -z "$changelog" ] || ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "Not a board release, skipping"
+            exit 0
+          fi
+          for file in "$board"/*.kicad_sch "$board"/*.kicad_pcb; do
+            if [ -f "$file" ]; then
+              sed -i "s/(rev \"[^\"]*\")/(rev \"v$version\")/" "$file"
+            fi
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Commit
+        env:
+          VERSION: ${{ steps.update.outputs.version }}
+        run: |
+          git diff --quiet && exit 0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -am "chore(hardware): set KiCad revision to v$VERSION"
+          git push
