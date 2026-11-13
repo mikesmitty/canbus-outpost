@@ -70,9 +70,10 @@ add_executable(canbus-outpost
 set(PROJECT_VERSION_BASE "0.6.0")
 # x-release-please-end
 
-# Get the current git version if available
+# Get the current git version if available, from the firmware's tags (the
+# boards in hardware/ have tags of their own)
 execute_process(
-    COMMAND git describe --tags --always --dirty
+    COMMAND git describe --tags --match "v[0-9]*" --always --dirty
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     OUTPUT_VARIABLE GIT_VERSION
     OUTPUT_STRIP_TRAILING_WHITESPACE
