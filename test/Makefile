@@ -4,7 +4,7 @@ CFLAGS ?= -std=c11 -Wall -Wextra -O1 -g
 SRC    := ../src
 
 TESTS := test_cdi_layout test_railcom test_fw_image test_railcom_app test_signals test_turnouts \
-         test_storage
+         test_storage test_partition_update
 LCC    := ../lib/lcc
 
 .PHONY: run clean
@@ -45,6 +45,11 @@ test_turnouts: test_turnouts.c $(SRC)/app/turnouts.c $(SRC)/app/turnouts.h $(SRC
 test_storage: test_storage.c $(SRC)/nv_storage.c $(SRC)/nv_storage.h $(SRC)/app/config.c \
               $(SRC)/app/config.h $(SRC)/app/config_layout.h $(wildcard mock/*/*.h)
 	$(CC) $(CFLAGS) -Imock -I$(SRC) -I$(SRC)/app -o $@ test_storage.c $(SRC)/nv_storage.c $(SRC)/app/config.c
+
+# partition_update.c on a flash array, with the table in use set by the test
+test_partition_update: test_partition_update.c $(SRC)/partition_update.c $(SRC)/partition_update.h \
+                       $(wildcard mock/*/*.h)
+	$(CC) $(CFLAGS) -Imock -I$(SRC) -o $@ test_partition_update.c $(SRC)/partition_update.c
 
 clean:
 	rm -f $(TESTS)

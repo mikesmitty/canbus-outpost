@@ -103,7 +103,9 @@ A running board goes into BOOTSEL mode without its button through `picotool rebo
 
 Flash with picotool rather than SWD, since loading over SWD replaces the partition table.
 
-Boards set up before the top 64 KB was kept clear have partition B running up to the last 16 KB. They keep working and keep their configuration, but can save only 4 KB of it until they get the new table, which the firmware reports on the debug log at startup. Installing it moves the configuration across on its next save.
+After that, firmware upgrades over CAN bring the partition table along. The firmware carries the table from `partition_table.json`, and once a newly installed image has confirmed itself, it checks the board's table. If that one is older, the firmware writes the new one beside it, since the boot ROM keeps two and uses the newer. The next reboot uses it: a power cycle, or Reboot in Interlock's node configuration. The old table stays in place until then, so a power cut while the new one is written changes nothing.
+
+Boards set up before the top 64 KB was kept clear have partition B running up to the last 16 KB, and get the new table that way. Until they reboot with it, they keep working and keep their configuration, but can save only 4 KB of it. The configuration moves across on its first save after the reboot.
 
 ## Node ID
 

@@ -12,10 +12,12 @@
 #include "fw_image.h"
 #include "lcc/memconfig.h"
 #include "lcc_task.h"
+#include "partition_update.h"
 #include "util/dbg.h"
 
-// A trial image confirms itself once it has been up this long
-#define CONFIRM_DELAY_MS  5000
+// Once the node has been up this long, a trial image confirms itself and
+// the partition table is brought up to date
+#define SETTLE_DELAY_MS   5000
 // and goes back to the previous image if it hasn't by this time
 #define TRIAL_LIMIT_MS    60000
 
@@ -24,8 +26,9 @@ static __attribute__((aligned(4))) uint8_t workarea[4096];
 
 static int running_partition = -1;
 static bool on_trial;
+static bool settled;
 static TimerHandle_t trial_timer;
-static TimerHandle_t confirm_timer;
+static TimerHandle_t settle_timer;
 
 // The transfer: bytes go through sector_buf into the target partition
 static uint8_t sector_buf[FLASH_SECTOR_SIZE];
@@ -179,25 +182,33 @@ static void trial_expired(TimerHandle_t t)
     lcc_task_reboot();  // a normal boot skips an unconfirmed image
 }
 
-static void confirm_in_task(uint32_t arg)
+static void settle_in_task(uint32_t arg)
 {
     (void)arg;
-    int rc = rom_explicit_buy(workarea, sizeof(workarea));
-    // The bootrom stops the watchdog while confirming
-    lcc_task_start_watchdog();
-    if (rc != 0) {
-        DBG("firmware: confirming the new image failed (%d)\n", rc);
-        return;  // the trial runs out and the previous image comes back
+    if (on_trial) {
+        int rc = rom_explicit_buy(workarea, sizeof(workarea));
+        // The bootrom stops the watchdog while confirming
+        lcc_task_start_watchdog();
+        if (rc != 0) {
+            DBG("firmware: confirming the new image failed (%d)\n", rc);
+            return;  // the trial runs out and the previous image comes back
+        }
+        on_trial = false;
+        xTimerStop(trial_timer, 0);
+        DBG("firmware: new image confirmed\n");
     }
-    on_trial = false;
-    xTimerStop(trial_timer, 0);
-    DBG("firmware: new image confirmed\n");
+    settled = true;
+    // Only a confirmed image installs its partition table, so one that
+    // fails its trial leaves the board as it was
+    if (running_partition >= 0)
+        partition_update(partition_table_block, partition_table_block_size, workarea,
+                         sizeof(workarea));
 }
 
-static void confirm_cb(TimerHandle_t t)
+static void settle_cb(TimerHandle_t t)
 {
     (void)t;
-    lcc_task_call(confirm_in_task, 0);
+    lcc_task_call(settle_in_task, 0);
 }
 
 // ------------------------------------------------------------------
@@ -212,13 +223,13 @@ void firmware_update_init(void)
         return;
     }
 
+    settle_timer = xTimerCreate("fw_settle", pdMS_TO_TICKS(SETTLE_DELAY_MS), pdFALSE, NULL,
+                                settle_cb);
     on_trial = (bi.tbyb_and_update_info & BOOT_TBYB_AND_UPDATE_FLAG_BUY_PENDING) != 0;
     if (on_trial) {
         DBG("firmware: new image on trial\n");
         trial_timer = xTimerCreate("fw_trial", pdMS_TO_TICKS(TRIAL_LIMIT_MS), pdFALSE, NULL,
                                    trial_expired);
-        confirm_timer = xTimerCreate("fw_confirm", pdMS_TO_TICKS(CONFIRM_DELAY_MS), pdFALSE,
-                                     NULL, confirm_cb);
         xTimerStart(trial_timer, 0);
     }
 
@@ -234,8 +245,8 @@ void firmware_update_init(void)
 
 void firmware_update_node_up(void)
 {
-    if (on_trial && !xTimerIsTimerActive(confirm_timer))
-        xTimerStart(confirm_timer, 0);
+    if (settle_timer && !settled && !xTimerIsTimerActive(settle_timer))
+        xTimerStart(settle_timer, 0);
 }
 
 void firmware_update_reboot(void)

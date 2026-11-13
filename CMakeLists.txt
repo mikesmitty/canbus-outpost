@@ -49,6 +49,8 @@ add_executable(canbus-outpost
     src/lcc_task.c
     src/node_id.c
     src/nv_storage.c
+    src/partition_table_block.S
+    src/partition_update.c
     src/railcom.c
     src/servo.c
     src/usb_gridconnect.c
@@ -132,6 +134,21 @@ target_include_directories(canbus-outpost PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/src
 )
+
+# The partition table, built into the firmware so a board gets it with a
+# firmware upgrade over CAN (src/partition_update.c)
+pico_init_picotool()
+if (NOT picotool_FOUND)
+    message(FATAL_ERROR "picotool is needed to build the partition table")
+endif()
+set(PARTITION_TABLE_BIN ${CMAKE_CURRENT_BINARY_DIR}/partition_table.bin)
+add_custom_command(OUTPUT ${PARTITION_TABLE_BIN}
+    COMMAND picotool partition create --quiet ${CMAKE_CURRENT_LIST_DIR}/partition_table.json ${PARTITION_TABLE_BIN}
+    DEPENDS ${CMAKE_CURRENT_LIST_DIR}/partition_table.json
+    VERBATIM)
+set_source_files_properties(src/partition_table_block.S PROPERTIES
+    COMPILE_DEFINITIONS "PARTITION_TABLE_BIN=\"${PARTITION_TABLE_BIN}\""
+    OBJECT_DEPENDS ${PARTITION_TABLE_BIN})
 
 # SHA-256 of the image in its metadata: the bootrom won't run a corrupted copy
 pico_hash_binary(canbus-outpost)

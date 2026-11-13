@@ -22,7 +22,7 @@ size_t config_load(void)
     } else {
         region = &nv_old_config_region;
         DBG("config: partition table predates the 64 KB storage area, saving up to %u bytes "
-            "(install the new one with make partition-table)\n",
+            "until the new one is in use\n",
             (unsigned)NV_MAX_DATA(nv_old_config_region.slot_sectors));
     }
 
