@@ -7,7 +7,7 @@
 	(title_block
 		(title "CANBUS Outpost")
 		(date "2026-10-30")
-		(rev "v0.0.0")
+		(rev "v0.4.0")
 		(company "Michael Smith")
 	)
 	(lib_symbols
